@@ -1,20 +1,43 @@
 ---
 name: Feature request
-about: Suggest an idea for this project
-title: ''
-labels: ''
+about: Suggest an improvement for the Encatch Flutter SDK
+title: "[Feature]: "
+labels: enhancement
 assignees: ''
 
 ---
 
-**Is your feature request related to a problem? Please describe.**
-A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
+## Summary
 
-**Describe the solution you'd like**
-A clear and concise description of what you want to happen.
+Describe the SDK feature or improvement you would like to see.
 
-**Describe alternatives you've considered**
-A clear and concise description of any alternative solutions or features you've considered.
+## Use Case
 
-**Additional context**
-Add any other context or screenshots about the feature request here.
+What problem does this solve for your Flutter app or SDK integration?
+
+## Proposed Behavior
+
+Describe the API, behavior, configuration option, platform support, or documentation change you are requesting.
+
+```dart
+// Optional: show what the API or usage could look like.
+```
+
+## Platforms
+
+Which platforms would this affect?
+
+- Android
+- iOS
+- macOS
+- Windows
+
+## Alternatives Considered
+
+Describe any workarounds or alternative approaches you have considered.
+
+## Additional Context
+
+Add links, screenshots, examples from other SDKs, or related issues that may help explain the request.
+
+Please do not include API keys, secrets, customer data, or other sensitive information.

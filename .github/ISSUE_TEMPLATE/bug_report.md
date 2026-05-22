@@ -1,38 +1,55 @@
 ---
 name: Bug report
-about: Create a report to help us improve
-title: ''
-labels: ''
+about: Report a reproducible issue with the Encatch Flutter SDK
+title: "[Bug]: "
+labels: bug
 assignees: ''
 
 ---
 
-**Describe the bug**
-A clear and concise description of what the bug is.
+## Description
 
-**To Reproduce**
-Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
+Describe the issue clearly and concisely.
 
-**Expected behavior**
-A clear and concise description of what you expected to happen.
+## Expected Behavior
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
+What did you expect to happen?
 
-**Desktop (please complete the following information):**
- - OS: [e.g. iOS]
- - Browser [e.g. chrome, safari]
- - Version [e.g. 22]
+## Actual Behavior
 
-**Smartphone (please complete the following information):**
- - Device: [e.g. iPhone6]
- - OS: [e.g. iOS8.1]
- - Browser [e.g. stock browser, safari]
- - Version [e.g. 22]
+What happened instead?
 
-**Additional context**
-Add any other context about the problem here.
+## Steps to Reproduce
+
+1. 
+2. 
+3. 
+
+If possible, include a minimal reproduction project or a small code snippet that demonstrates the issue.
+
+## Environment
+
+- Encatch Flutter SDK version:
+- Flutter version:
+- Dart version:
+- Target platform: Android / iOS / macOS / Windows
+- Device or emulator:
+- OS version:
+
+## Relevant Code
+
+```dart
+// Add the smallest code snippet that reproduces the issue.
+```
+
+## Logs
+
+```text
+Paste relevant Flutter logs, stack traces, or SDK debug logs here.
+```
+
+## Additional Context
+
+Add screenshots, videos, links to related issues, or any other context that may help us investigate.
+
+Please do not include API keys, secrets, customer data, or other sensitive information.

@@ -1,0 +1,19 @@
+# Dart/Flutter
+.dart_tool/
+.packages
+.pub-cache/
+pubspec.lock
+*.iml
+
+# Flutter generated
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+
+# IDE
+.idea/
+*.iml
+
+# OS
+.DS_Store
+doc/

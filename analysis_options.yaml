@@ -1,0 +1,16 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - build/**
+
+linter:
+  rules:
+    directives_ordering: true
+    no_leading_underscores_for_local_identifiers: false
+    prefer_const_constructors: true
+    prefer_final_fields: false
+    sort_pub_dependencies: true
+    unnecessary_library_name: false
+    unawaited_futures: false
+    use_null_aware_elements: false

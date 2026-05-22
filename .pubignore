@@ -1,0 +1,5 @@
+# Generated dartdoc output — not needed in the published package
+doc/
+
+# Generated Flutter build output should never be published.
+build/
