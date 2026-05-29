@@ -170,6 +170,21 @@ enum EventType {
 
   /// Fired when the user taps "Remind me later" in a form.
   formRemindMeLater,
+
+  /// Fired when a completionCta action triggers on a thank_you or exit_form screen.
+  ///
+  /// [EventPayload.data] contains:
+  /// - `action`: `'app_navigate'` | `'redirect_internal'` | `'redirect_external'`
+  /// - `route` (app_navigate only): the host route to navigate to
+  /// - `url` (redirect_* only): the URL that was opened
+  /// - `surface`: always `'inApp'`
+  /// - `trigger`: `'manual'` | `'auto'`
+  ///
+  /// For `app_navigate` the host should navigate to `data['route']` in an
+  /// [Encatch.on] listener; the SDK closes the form overlay automatically after
+  /// emitting this event (same UX as redirect/dismiss CTAs).
+  /// For redirect actions the SDK opens the URL and the form closes automatically.
+  formCtaTriggered,
 }
 
 /// How a form display was triggered.
@@ -409,6 +424,7 @@ enum FormMessageType {
   formUploadFileRequest,
   formQnaWithAiRequest,
   formRemindMeLater,
+  formCtaTriggered,
 }
 
 /// Extension on [FormMessageType] for string serialization/deserialization.
@@ -452,6 +468,8 @@ extension FormMessageTypeExt on FormMessageType {
         return 'form:qnaWithAiRequest';
       case FormMessageType.formRemindMeLater:
         return 'form:remindmelater';
+      case FormMessageType.formCtaTriggered:
+        return 'form:ctaTriggered';
     }
   }
 
@@ -1556,6 +1574,15 @@ class SubmitFormResponse {
 // Internal show form payload (for WebView bridge)
 // ============================================================================
 
+/// Resolved presentation target for a showForm call.
+enum FormPresentation {
+  /// Render in a registered EncatchInlineForm slot.
+  inline,
+
+  /// Render as the default full-screen modal overlay.
+  modal,
+}
+
 class ShowFormPayload {
   final String formId;
   final ShowFormResponse formConfig;
@@ -1568,6 +1595,13 @@ class ShowFormPayload {
   /// Serialized caller context ([DateTime] values already converted to ISO strings).
   final Map<String, Object>? context;
 
+  /// Resolved presentation target. Defaults to [FormPresentation.modal].
+  final FormPresentation presentation;
+
+  /// Set when [presentation] is [FormPresentation.inline]; identifies the
+  /// specific registered slot that should display this form.
+  final String? inlineSlotId;
+
   const ShowFormPayload({
     required this.formId,
     required this.formConfig,
@@ -1577,6 +1611,8 @@ class ShowFormPayload {
     this.locale,
     this.theme,
     this.context,
+    this.presentation = FormPresentation.modal,
+    this.inlineSlotId,
   });
 }
 

@@ -7,7 +7,8 @@ Official Flutter SDK for [Encatch](https://encatch.com) — in-app feedback.
 - Initialize the SDK with your API key
 - Identify users with traits and secure HMAC verification
 - Track custom events and screens
-- Display feedback forms in a native WebView overlay with animations
+- Display feedback forms as a native WebView modal overlay with animations
+- Render forms **inline** in your layout with `EncatchInlineForm`
 - Offline-resilient retry queue with exponential backoff
 - 30-second session ping to maintain engagement sessions
 - Pre-fill form responses programmatically
@@ -124,6 +125,89 @@ EncatchProvider(
   child: MyApp(),
 )
 ```
+
+## Inline forms
+
+`EncatchInlineForm` renders a form directly inside your widget tree instead of as a full-screen modal overlay. Place it anywhere — in a `Column`, `SingleChildScrollView`, `Card`, etc.
+
+### Quick start
+
+```dart
+// In your screen's widget tree:
+SingleChildScrollView(
+  child: Column(
+    children: [
+      // ... content above ...
+      EncatchInlineForm(
+        formId: 'your-form-slug', // exact match; omit for wildcard
+        enabled: ModalRoute.of(context)?.isCurrent ?? true,
+      ),
+      // ... content below ...
+    ],
+  ),
+)
+```
+
+Then trigger the form from anywhere:
+
+```dart
+await Encatch.showForm('your-form-slug');
+```
+
+### Routing rules
+
+When `showForm` is called, the SDK resolves the presenter in this order:
+
+1. **Exact match** — first registered `EncatchInlineForm` whose `formId` matches the payload wins.
+2. **Wildcard** — first registered `EncatchInlineForm` with no `formId` catches anything not exact-matched.
+3. **Modal fallback** — `EncatchWebView` shows the form as the default overlay when no inline slot is registered or none match.
+
+### Tab / navigation focus
+
+A background tab with `EncatchInlineForm` mounted will intercept `showForm` calls even when it is not visible. To prevent this:
+
+**Option A — pass `enabled` from `ModalRoute`:**
+
+```dart
+EncatchInlineForm(
+  formId: 'your-form-slug',
+  enabled: ModalRoute.of(context)?.isCurrent ?? true,
+)
+```
+
+**Option B — only mount `EncatchInlineForm` on the active route** (e.g. using `IndexedStack` with conditional rendering).
+
+When `enabled: false` the slot is unregistered, so `showForm` falls through to the modal or another active slot.
+
+### ScrollView embedding
+
+The WebView's internal scroll is disabled. The host `SingleChildScrollView` (or `CustomScrollView`) provides scrolling. The widget height grows automatically via `form:resize` messages from the web form.
+
+```dart
+SingleChildScrollView(
+  child: Column(
+    children: [
+      EncatchInlineForm(formId: 'my-form'),
+    ],
+  ),
+)
+```
+
+### Keyboard handling
+
+The host app controls keyboard avoidance. Wrap the scroll view in `MediaQuery` inset handling or use `Scaffold`'s `resizeToAvoidBottomInset` to slide content above the keyboard.
+
+### Props
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `formId` | `String?` | `null` | Exact form slug/id to match. `null` = wildcard. |
+| `enabled` | `bool` | `true` | When `false`, unregisters the slot — use for tab/route focus. |
+| `minHeight` | `double` | `0` | Minimum height floor applied after form:resize. |
+| `decoration` | `BoxDecoration?` | `null` | Outer container decoration. |
+| `onOverlayOpenChange` | `ValueChanged<bool>?` | `null` | Called when a QnA/Scheduler overlay opens or closes. |
+
+---
 
 ## Custom Native Forms
 

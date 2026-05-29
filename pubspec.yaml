@@ -1,6 +1,6 @@
 name: encatch_flutter
 description: Encatch Flutter SDK for in-app feedback and survey collection. Full feature parity with the Encatch React Native SDK.
-version: 1.0.0-beta.2
+version: 1.0.0-beta.3
 homepage: https://encatch.com
 repository: https://github.com/get-encatch/flutter-sdk
 issue_tracker: https://github.com/get-encatch/flutter-sdk/issues

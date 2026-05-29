@@ -13,7 +13,9 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'device_info.dart';
+import 'form_presentation_registry.dart';
 import 'logger.dart';
+import 'pending_completion_cta.dart';
 import 'retry_queue.dart' as queue;
 import 'storage.dart';
 import 'types.dart';
@@ -474,6 +476,8 @@ class Encatch {
   }) async {
     if (!_initialized) return;
 
+    PendingCompletionCtaScheduler.cancel(formId);
+
     final resetMode = options?.reset ?? ResetMode.always;
 
     // Serialize context: convert DateTime values to ISO 8601 strings.
@@ -540,6 +544,13 @@ class Encatch {
       }
     }
 
+    final target = resolvePresentationTarget(
+      formId: res.feedbackConfigurationId,
+      formConfig: res,
+    );
+
+    PendingCompletionCtaScheduler.cancel(res.feedbackConfigurationId);
+
     _showFormController.add(
       ShowFormPayload(
         formId: res.feedbackConfigurationId,
@@ -550,11 +561,23 @@ class Encatch {
         locale: _locale,
         theme: _theme,
         context: serializedContext,
+        presentation: target is InlineTarget
+            ? FormPresentation.inline
+            : FormPresentation.modal,
+        inlineSlotId: target is InlineTarget ? target.slotId : null,
       ),
     );
+    // Note: setFormVisible(true) is called by each presenter independently
+    // after it confirms it will display the form, not here.
   }
 
   static Future<void> dismissForm({String? formConfigurationId}) async {
+    if (formConfigurationId != null) {
+      PendingCompletionCtaScheduler.cancel(formConfigurationId);
+    } else {
+      PendingCompletionCtaScheduler.cancelAll();
+    }
+
     _dismissFormController.add(
       DismissPayload(formConfigurationId: formConfigurationId),
     );
@@ -1088,6 +1111,7 @@ class Encatch {
   // ============================================================================
 
   static void stop() {
+    PendingCompletionCtaScheduler.cancelAll();
     _stopPingInterval();
     queue.stopAppLifecycleListener();
   }
