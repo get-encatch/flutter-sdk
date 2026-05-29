@@ -44,12 +44,12 @@ class PendingCompletionCta {
   }
 
   Map<String, dynamic> toEventData() => {
-        'action': action,
-        if (url != null) 'url': url,
-        if (route != null) 'route': route,
-        'surface': surface,
-        'trigger': trigger,
-      };
+    'action': action,
+    if (url != null) 'url': url,
+    if (route != null) 'route': route,
+    'surface': surface,
+    'trigger': trigger,
+  };
 }
 
 /// Native timer keyed by formId; cancels on showForm / dismissForm.

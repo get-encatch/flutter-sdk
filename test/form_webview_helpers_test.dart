@@ -112,10 +112,7 @@ void main() {
     });
 
     test('falls back to --popover when --background is missing', () {
-      final color = getBackgroundColor(
-        '{"--popover":"#445566"}',
-        Colors.white,
-      );
+      final color = getBackgroundColor('{"--popover":"#445566"}', Colors.white);
 
       expect(color, const Color(0xFF445566));
     });
@@ -226,10 +223,7 @@ void main() {
 
     test('prefers payload theme over shareableMode', () {
       final theme = resolveFormWebViewTheme(
-        payload(
-          theme: EncatchTheme.dark,
-          shareableMode: 'light',
-        ),
+        payload(theme: EncatchTheme.dark, shareableMode: 'light'),
         systemBrightness: Brightness.light,
       );
 
@@ -238,10 +232,7 @@ void main() {
 
     test('uses system brightness when theme and shareableMode are system', () {
       final theme = resolveFormWebViewTheme(
-        payload(
-          theme: EncatchTheme.system,
-          shareableMode: 'system',
-        ),
+        payload(theme: EncatchTheme.system, shareableMode: 'system'),
         systemBrightness: Brightness.dark,
       );
 
@@ -254,9 +245,7 @@ void main() {
         payload(
           theme: EncatchTheme.light,
           themes: {
-            'light': {
-              'theme': '{"--background":"#112233"}',
-            },
+            'light': {'theme': '{"--background":"#112233"}'},
           },
         ),
         systemBrightness: Brightness.dark,

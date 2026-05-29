@@ -113,12 +113,12 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
   // ============================================================================
 
   String _buildUrl() => buildFormWebViewUrl(
-        webHost: Encatch.webHost,
-        formId: widget.payload.formId,
-        instanceKey: _instanceKey,
-        debugMode: Encatch.debugMode,
-        presentation: widget.presentation,
-      );
+    webHost: Encatch.webHost,
+    formId: widget.payload.formId,
+    instanceKey: _instanceKey,
+    debugMode: Encatch.debugMode,
+    presentation: widget.presentation,
+  );
 
   // ============================================================================
   // Native → WebView message injection
@@ -127,7 +127,8 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
   void _injectSdkMessage(SdkMessageType type, Map<String, dynamic> data) {
     if (_controller == null) return;
     final msg = jsonEncode({'type': type.value, 'data': data});
-    final js = '''
+    final js =
+        '''
       window.dispatchEvent(new MessageEvent('message', { data: $msg }));
       true;
     ''';
@@ -545,7 +546,8 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
             ),
           );
           widget.onClose();
-        } else if ((action == 'redirect_internal' || action == 'redirect_external') &&
+        } else if ((action == 'redirect_internal' ||
+                action == 'redirect_external') &&
             urlStr != null) {
           final uri = Uri.tryParse(urlStr);
           if (uri != null) {
@@ -556,7 +558,9 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
                 : LaunchMode.externalApplication;
             launchUrl(uri, mode: mode).catchError((Object e) {
               // ignore: avoid_print
-              print('[${widget.logTag}] ctaTriggered: failed to open URL ($action): $e');
+              print(
+                '[${widget.logTag}] ctaTriggered: failed to open URL ($action): $e',
+              );
               return false;
             });
           }

@@ -39,9 +39,10 @@ class _FormWebViewSkeletonState extends State<FormWebViewSkeleton>
       vsync: this,
       duration: const Duration(milliseconds: 700),
     );
-    _opacity = Tween<double>(begin: 0.4, end: 1.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
+    _opacity = Tween<double>(
+      begin: 0.4,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
     _controller.repeat(reverse: true);
   }
 

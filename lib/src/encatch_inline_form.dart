@@ -218,7 +218,9 @@ class _EncatchInlineFormState extends State<EncatchInlineForm> {
 
   void _onHeightChange(double h) {
     if (_overlayActive) return; // ignore resizes while overlay is frozen
-    final next = widget.minHeight > 0 ? h.clamp(widget.minHeight, double.infinity) : h;
+    final next = widget.minHeight > 0
+        ? h.clamp(widget.minHeight, double.infinity)
+        : h;
     if ((next - _contentHeight).abs() > 1) {
       setState(() => _contentHeight = next);
     }
@@ -234,8 +236,8 @@ class _EncatchInlineFormState extends State<EncatchInlineForm> {
         final base = _contentHeight > 0
             ? _contentHeight
             : widget.minHeight > 0
-                ? widget.minHeight
-                : _kLoadingSkeletonHeight;
+            ? widget.minHeight
+            : _kLoadingSkeletonHeight;
         final screenH = MediaQuery.of(context).size.height;
         _frozenHeight = base.clamp(0, screenH * 0.8);
       } else {

@@ -32,7 +32,9 @@ String buildFormWebViewUrl({
     params['presentation'] = 'inline';
   }
   final query = params.entries
-      .map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}')
+      .map(
+        (e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}',
+      )
       .join('&');
   return '$webHost/s/flutter-sdk-form?$query';
 }
@@ -68,8 +70,9 @@ Color getBackgroundColor(
     final rawPopover = vars['--popover'];
     final selectedToken = rawBackground != null ? '--background' : '--popover';
     final value = rawBackground ?? rawPopover;
-    final parsedColor =
-        value is String && value.isNotEmpty ? _tryParseColor(value) : null;
+    final parsedColor = value is String && value.isNotEmpty
+        ? _tryParseColor(value)
+        : null;
     final resolved = parsedColor ?? fallback;
     _debugPrintBackgroundColor(
       debugLabel: debugLabel,
@@ -160,11 +163,16 @@ FormWebViewTheme resolveFormWebViewTheme(
   );
   final activeModeKey = activeMode == Brightness.dark ? 'dark' : 'light';
   final themeJson = appearance?['themes']?[activeModeKey]?['theme'];
-  final fallback =
-      activeMode == Brightness.dark ? const Color(0xFF1a1a1a) : Colors.white;
+  final fallback = activeMode == Brightness.dark
+      ? const Color(0xFF1a1a1a)
+      : Colors.white;
 
   return FormWebViewTheme(
-    backgroundColor: getBackgroundColor(themeJson, fallback, debugLabel: debugLabel),
+    backgroundColor: getBackgroundColor(
+      themeJson,
+      fallback,
+      debugLabel: debugLabel,
+    ),
     activeMode: activeMode,
   );
 }
