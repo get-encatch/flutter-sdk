@@ -12,18 +12,15 @@
 library;
 
 import 'dart:async';
-import 'dart:convert';
-import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'encatch.dart';
-import 'logger.dart';
+import 'encatch_form_webview_bridge.dart';
+import 'form_webview_helpers.dart';
+import 'form_webview_skeleton.dart';
 import 'types.dart';
 
 // ============================================================================
-// Helpers
+// Layout helpers (modal-only)
 // ============================================================================
 
 Color _parseHexColor(String hex, {double opacity = 0.3}) {
@@ -84,29 +81,6 @@ double _calcMaxWidth(double screenWidth) {
   return screenWidth * 0.4;
 }
 
-Color _getPopoverColor(dynamic themeJson, Color fallback) {
-  if (themeJson == null || themeJson == '{}') return fallback;
-  try {
-    final vars = (jsonDecode(themeJson as String) as Map<String, dynamic>);
-    final value = vars['--popover'];
-    if (value is String && value.isNotEmpty) return _parseHexColor(value);
-  } catch (_) {}
-  return fallback;
-}
-
-Color _resolvePopoverColor(ShowFormPayload? payload) {
-  if (payload == null) return Colors.white;
-  final appearance = payload.formConfig.appearanceProperties;
-  final shareableMode =
-      (appearance?['featureSettings']?['shareableMode'] as String?) ?? 'light';
-  final activeMode = shareableMode == 'dark' ? 'dark' : 'light';
-  final themeJson = appearance?['themes']?[activeMode]?['theme'];
-  final fallback = activeMode == 'dark'
-      ? const Color(0xFF1a1a1a)
-      : Colors.white;
-  return _getPopoverColor(themeJson, fallback);
-}
-
 // ============================================================================
 // EncatchWebView — headless listener widget
 // ============================================================================
@@ -116,21 +90,7 @@ Color _resolvePopoverColor(ShowFormPayload? payload) {
 /// [flutter_inappwebview].
 ///
 /// Place this widget once inside your [EncatchProvider] — no other configuration
-/// is required:
-///
-/// ```dart
-/// EncatchProvider(
-///   config: EncatchConfig(apiKey: 'YOUR_KEY'),
-///   child: MaterialApp(
-///     home: Stack(
-///       children: [
-///         YourApp(),
-///         EncatchWebView(),
-///       ],
-///     ),
-///   ),
-/// )
-/// ```
+/// is required.
 class EncatchWebView extends StatefulWidget {
   const EncatchWebView({super.key});
 
@@ -162,6 +122,12 @@ class _EncatchWebViewState extends State<EncatchWebView> {
   void _handleShowForm(ShowFormPayload payload) {
     if (!mounted) return;
 
+    // An inline slot is handling this form — clear any active modal and return.
+    if (payload.presentation == FormPresentation.inline) {
+      _removeEntry();
+      return;
+    }
+
     // EncatchWebView lives above MaterialApp so its context has no Navigator.
     // Walk up from the root element to find the first OverlayState instead.
     final rootElement = WidgetsBinding.instance.rootElement;
@@ -181,7 +147,7 @@ class _EncatchWebViewState extends State<EncatchWebView> {
 
     if (overlay == null) return;
 
-    // Remove any existing entry before inserting a new one
+    // Remove any existing entry before inserting a new one.
     _removeEntry();
 
     late OverlayEntry entry;
@@ -231,12 +197,10 @@ class _EncatchFormOverlay extends StatefulWidget {
 
 class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
     with TickerProviderStateMixin {
-  // WebView controller
-  InAppWebViewController? _controller;
-
   // Overlay state
   bool _webViewReady = false;
   bool _isClosing = false;
+  bool _useTallMaxHeight = false;
 
   // Height animation
   late AnimationController _heightController;
@@ -245,7 +209,6 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
   double _targetHeight = 300;
   double? _lastMeasuredContentHeight;
   Timer? _heightDebounceTimer;
-  bool _useTallMaxHeight = false;
 
   // Entrance / exit animation
   late AnimationController _entranceController;
@@ -253,13 +216,8 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
   late Animation<double> _scaleAnimation;
   late Animation<Offset> _slideAnimation;
 
-  // Track which form journeys have already sent form:answered
-  final Set<String> _formAnsweredTracked = {};
-
   // SDK-triggered programmatic dismiss subscription
   StreamSubscription<DismissPayload>? _dismissSub;
-
-  static final _logger = const EncatchLogger(debugMode: false);
 
   @override
   void initState() {
@@ -289,7 +247,6 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
       end: Offset.zero,
     ).animate(_entranceController);
 
-    // Listen for SDK-triggered dismisses (e.g. from Encatch.dismissForm())
     _dismissSub = Encatch.onDismissForm.listen((_) => _handleClose());
   }
 
@@ -303,7 +260,7 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
   }
 
   // ============================================================================
-  // Animations
+  // Position / size helpers
   // ============================================================================
 
   String get _position =>
@@ -311,8 +268,6 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
           as String?) ??
       'center';
 
-  /// maxDialogHeightPercentInApp (10–100) from featureSettings, converted to a
-  /// fraction (0.0–1.0). Defaults to 0.8 when the property is absent.
   double get _maxHeightFraction {
     final raw = widget
         .payload
@@ -325,58 +280,15 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
   double get _effectiveMaxHeightFraction =>
       _useTallMaxHeight ? 0.95 : _maxHeightFraction;
 
-  bool _sectionUsesTallMaxHeight(int sectionIndex) {
-    final questionnaireFields = widget.payload.formConfig.questionnaireFields;
-    final sections = questionnaireFields?['sections'];
-    final questions = questionnaireFields?['questions'];
-    if (sections is! List || questions is! Map) return false;
-    if (sectionIndex < 0 || sectionIndex >= sections.length) return false;
-
-    final section = sections[sectionIndex];
-    if (section is! Map) return false;
-    final questionIds = section['questionIds'];
-    if (questionIds is! List) return false;
-
-    return questionIds.any((questionId) {
-      final question = questions[questionId];
-      if (question is! Map) return false;
-      final type = question['type'];
-      return type == 'qna_with_ai';
-    });
-  }
-
-  void _applyTallMaxHeight(bool useTallMaxHeight) {
-    if (useTallMaxHeight == _useTallMaxHeight) return;
-
-    setState(() => _useTallMaxHeight = useTallMaxHeight);
-    final lastMeasuredHeight = _lastMeasuredContentHeight;
-    if (lastMeasuredHeight != null && lastMeasuredHeight > 0) {
-      _updateHeight(lastMeasuredHeight);
-    }
-  }
-
-  void _applySectionHeightPolicy(Object? rawSectionIndex) {
-    if (rawSectionIndex is! num) return;
-    _applyTallMaxHeight(_sectionUsesTallMaxHeight(rawSectionIndex.toInt()));
-  }
-
-  bool _messageRequestsTallMaxHeight(Map<String, dynamic> data) {
-    if (data['fullHeight'] == true) return true;
-
-    final questionTypes = data['questionTypes'];
-    if (questionTypes is List) {
-      return questionTypes.any((type) => type == 'qna_with_ai');
-    }
-
-    final questionType = data['questionType'] ?? data['type'];
-    return questionType == 'qna_with_ai';
-  }
-
   double _visibleHeight(MediaQueryData mediaQuery) {
     return (mediaQuery.size.height - mediaQuery.viewInsets.bottom)
         .clamp(0.0, mediaQuery.size.height)
         .toDouble();
   }
+
+  // ============================================================================
+  // Animations
+  // ============================================================================
 
   void _runEntranceAnimation() {
     final pos = _position;
@@ -423,7 +335,7 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
   }
 
   // ============================================================================
-  // Height update (debounced, capped at _maxHeightFraction of viewport; defaults to 80%)
+  // Height update (debounced, capped at _effectiveMaxHeightFraction of viewport)
   // ============================================================================
 
   void _updateHeight(double newHeight) {
@@ -453,8 +365,25 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
   }
 
   // ============================================================================
-  // Close handlers
+  // Bridge callbacks
   // ============================================================================
+
+  void _handleBridgeReady() {
+    if (!mounted) return;
+    setState(() => _webViewReady = true);
+    _runEntranceAnimation();
+  }
+
+  void _handleBridgeHeightChange(double h) {
+    _updateHeight(h);
+  }
+
+  void _handleBridgeForceFullHeight(bool force) {
+    if (force == _useTallMaxHeight) return;
+    setState(() => _useTallMaxHeight = force);
+    final last = _lastMeasuredContentHeight;
+    if (last != null && last > 0) _updateHeight(last);
+  }
 
   void _handleClose() {
     if (_isClosing || !mounted) return;
@@ -463,385 +392,7 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
   }
 
   // ============================================================================
-  // Native → WebView message injection
-  // ============================================================================
-
-  void _injectSdkMessage(SdkMessageType type, Map<String, dynamic> data) {
-    if (_controller == null) return;
-    final msg = jsonEncode({'type': type.value, 'data': data});
-    final js =
-        '''
-      window.dispatchEvent(new MessageEvent('message', { data: $msg }));
-      true;
-    ''';
-    _controller!.evaluateJavascript(source: js).catchError((_) {});
-  }
-
-  void _handleFormReady(String formId) {
-    if (!mounted) return;
-
-    final payload = widget.payload;
-    final config = payload.formConfig;
-    // ignore: avoid_print
-    print('[EncatchWebView] form ready received: $formId');
-
-    _injectSdkMessage(SdkMessageType.formConfig, {
-      ...config.toJson(),
-      'triggerType': payload.triggerType.name,
-      if (payload.context != null) 'context': payload.context,
-    });
-
-    if (payload.resetMode == ResetMode.always) {
-      _injectSdkMessage(SdkMessageType.resetData, {});
-    }
-
-    final prefills = payload.prefillResponses?.isNotEmpty == true
-        ? payload.prefillResponses!
-        : Encatch.getPendingResponses();
-    if (prefills.isNotEmpty) {
-      _injectSdkMessage(SdkMessageType.prefillResponses, {
-        'responses': prefills,
-      });
-      if (payload.prefillResponses?.isEmpty ?? true) {
-        Encatch.clearPendingResponses();
-      }
-    }
-
-    if (payload.theme != null) {
-      _injectSdkMessage(SdkMessageType.theme, {'theme': payload.theme!.name});
-    }
-    if (payload.locale != null) {
-      _injectSdkMessage(SdkMessageType.locale, {'locale': payload.locale!});
-    }
-
-    _applySectionHeightPolicy(0);
-    if (!_webViewReady) {
-      setState(() => _webViewReady = true);
-      _runEntranceAnimation();
-    }
-  }
-
-  // ============================================================================
-  // WebView → Native message handling
-  // ============================================================================
-
-  Future<void> _handleWebViewMessage(Map<String, dynamic> msg) async {
-    final typeStr = msg['type'] as String? ?? '';
-    final type = FormMessageTypeExt.fromString(typeStr);
-    final data = (msg['data'] as Map<String, dynamic>?) ?? {};
-    final formId = msg['formId'] as String? ?? '';
-
-    switch (type) {
-      case FormMessageType.formReady:
-        _handleFormReady(formId);
-
-      case FormMessageType.formResize:
-        final h = data['height'];
-        // ignore: avoid_print
-        print('[EncatchWebView] form resize: $h');
-        if (h is num && h > 0) _updateHeight(h.toDouble());
-
-      case FormMessageType.formCloseButton:
-        // Close button is rendered by the web form itself — no native action needed.
-        break;
-
-      case FormMessageType.formThemeData:
-        break;
-
-      case FormMessageType.formSubmit:
-        if (data.isEmpty) break;
-        final rawContext = data['context'];
-        Encatch.submitForm(
-          SubmitFormRequest(
-            triggerType: data['triggerType'] == 'automatic'
-                ? TriggerType.automatic
-                : TriggerType.manual,
-            formDetails: FormDetails(
-              formConfigurationId:
-                  data['feedbackConfigurationId'] as String? ?? '',
-              isPartialSubmit: data['isPartialSubmit'] as bool? ?? false,
-              feedbackIdentifier: data['feedbackIdentifier'] as String?,
-              responseLanguageCode: data['responseLanguageCode'] as String?,
-              response: data['response'] as Map<String, dynamic>?,
-              completionTimeInSeconds: data['completionTimeInSeconds'] as int?,
-              context: rawContext is Map
-                  ? Map<String, Object>.from(rawContext)
-                  : null,
-              visitedQuestionIds: data['visitedQuestionIds'] is List
-                  ? List<String>.from(data['visitedQuestionIds'] as List)
-                  : null,
-            ),
-          ),
-        ).catchError((_) {});
-        Encatch.emitEvent(
-          EventType.formSubmit,
-          EventPayload(
-            formId: formId,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            data: data,
-          ),
-        );
-
-      case FormMessageType.formComplete:
-        Encatch.emitEvent(
-          EventType.formComplete,
-          EventPayload(
-            formId: formId,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            data: data,
-          ),
-        );
-        Encatch.trackFormEvent(
-          'form:complete',
-          data['feedbackConfigurationId'] as String?,
-        ).catchError((_) {});
-        _formAnsweredTracked.remove(formId);
-        _handleClose();
-
-      case FormMessageType.formClose:
-        Encatch.emitEvent(
-          EventType.formClose,
-          EventPayload(
-            formId: formId,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            data: data,
-          ),
-        );
-        _formAnsweredTracked.remove(
-          (data['feedbackConfigurationId'] as String?) ?? formId,
-        );
-        _handleClose();
-
-      case FormMessageType.formStarted:
-        Encatch.emitEvent(
-          EventType.formStarted,
-          EventPayload(
-            formId: formId,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            data: data,
-          ),
-        );
-        Encatch.trackFormEvent(
-          'form:started',
-          data['feedbackConfigurationId'] as String?,
-        ).catchError((_) {});
-
-      case FormMessageType.formAnswered:
-        Encatch.emitEvent(
-          EventType.formAnswered,
-          EventPayload(
-            formId: formId,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            data: data,
-          ),
-        );
-        final answeredKey =
-            (data['feedbackConfigurationId'] as String?) ?? formId;
-        if (answeredKey.isNotEmpty &&
-            !_formAnsweredTracked.contains(answeredKey)) {
-          _formAnsweredTracked.add(answeredKey);
-          Encatch.trackFormEvent(
-            'form:answered',
-            data['feedbackConfigurationId'] as String?,
-          ).catchError((_) {});
-        }
-
-      case FormMessageType.formSectionChange:
-        _applySectionHeightPolicy(data['sectionIndex']);
-        Encatch.emitEvent(
-          EventType.formSectionChange,
-          EventPayload(
-            formId: formId,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            data: data,
-          ),
-        );
-
-      case FormMessageType.formShow:
-        Encatch.emitEvent(
-          EventType.formShow,
-          EventPayload(
-            formId: formId,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            data: data,
-          ),
-        );
-        Encatch.trackFormEvent(
-          'form:show',
-          data['feedbackConfigurationId'] as String?,
-        ).catchError((_) {});
-
-      case FormMessageType.formRefineTextRequest:
-        if (data.isEmpty) break;
-        try {
-          final res = await Encatch.refineText(
-            RefineTextRequest(
-              questionId: data['questionId'] as String? ?? '',
-              feedbackConfigurationId:
-                  data['feedbackConfigurationId'] as String? ?? '',
-              userText: data['userText'] as String? ?? '',
-            ),
-          );
-          _injectSdkMessage(SdkMessageType.refineTextResponse, {
-            'requestId': data['requestId'],
-            ...res.toJson(),
-          });
-        } catch (_) {
-          _injectSdkMessage(SdkMessageType.refineTextResponse, {
-            'requestId': data['requestId'],
-            'error': 'Refine text request failed',
-          });
-        }
-
-      case FormMessageType.formError:
-        // ignore: avoid_print
-        print('[EncatchWebView] form:error received: $data');
-        Encatch.emitEvent(
-          EventType.formError,
-          EventPayload(
-            formId: formId,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            data: data,
-          ),
-        );
-
-      case FormMessageType.formLayout:
-        _applyTallMaxHeight(_messageRequestsTallMaxHeight(data));
-        break;
-
-      case FormMessageType.formReadyToDismiss:
-        // No-op: partial-submit-before-dismiss is now handled by the web form itself.
-        break;
-
-      case FormMessageType.formUploadFileRequest:
-        if (data.isEmpty) break;
-        final requestId = data['requestId'] as String? ?? '';
-        // The web form sends raw base64 content (no data-URI prefix).
-        final fileData = data['fileData'] as String?;
-        final mimeType =
-            data['mimeType'] as String? ?? 'application/octet-stream';
-        final feedbackConfigurationId =
-            data['feedbackConfigurationId'] as String? ?? formId;
-        final questionId = data['questionId'] as String? ?? '';
-        final fileName = data['fileName'] as String?;
-
-        if (fileData == null || fileData.isEmpty) {
-          _injectSdkMessage(SdkMessageType.uploadFileResponse, {
-            'requestId': requestId,
-            'error': 'No file data received',
-          });
-          break;
-        }
-
-        Encatch.uploadFile(
-              UploadFileRequest(
-                feedbackConfigurationId: feedbackConfigurationId,
-                questionId: questionId,
-                fileData: fileData,
-                mimeType: mimeType,
-                fileName: fileName,
-                onProgress: (percent) {
-                  _injectSdkMessage(SdkMessageType.uploadFileProgress, {
-                    'requestId': requestId,
-                    'percent': percent,
-                  });
-                },
-              ),
-            )
-            .then((res) {
-              _injectSdkMessage(SdkMessageType.uploadFileResponse, {
-                'requestId': requestId,
-                'fileUrl': res.fileUrl,
-              });
-            })
-            .catchError((Object e) {
-              _injectSdkMessage(SdkMessageType.uploadFileResponse, {
-                'requestId': requestId,
-                'error': e.toString(),
-              });
-            });
-
-      case FormMessageType.formQnaWithAiRequest:
-        if (data.isEmpty) break;
-        final requestId = data['requestId'] as String? ?? '';
-        final feedbackConfigurationId =
-            data['feedbackConfigurationId'] as String? ?? formId;
-        final questionId = data['questionId'] as String? ?? '';
-        final rawConversation = data['conversation'];
-        final conversation = <QnaWithAiConversationTurn>[];
-        if (rawConversation is List) {
-          for (final item in rawConversation) {
-            if (item is Map<String, dynamic>) {
-              conversation.add(
-                QnaWithAiConversationTurn(
-                  question: item['question'] as String? ?? '',
-                  answer: item['answer'] as String? ?? '',
-                ),
-              );
-            }
-          }
-        }
-
-        Encatch.streamQnaWithAi(
-              QnaWithAiRequest(
-                feedbackConfigurationId: feedbackConfigurationId,
-                questionId: questionId,
-                conversation: conversation,
-              ),
-              onChunk: (chunk) {
-                _injectSdkMessage(SdkMessageType.qnaWithAiChunk, {
-                  'requestId': requestId,
-                  'chunk': chunk,
-                });
-              },
-            )
-            .then((res) {
-              _injectSdkMessage(SdkMessageType.qnaWithAiDone, {
-                'requestId': requestId,
-                'answer': res.answer,
-              });
-            })
-            .catchError((Object e) {
-              _injectSdkMessage(SdkMessageType.qnaWithAiResponse, {
-                'requestId': requestId,
-                'error': e.toString(),
-              });
-            });
-
-      case FormMessageType.formRemindMeLater:
-        Encatch.emitEvent(
-          EventType.formRemindMeLater,
-          EventPayload(
-            formId: formId,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            data: data,
-          ),
-        );
-        Encatch.trackFormEvent(
-          'form:remindmelater',
-          data['feedbackConfigurationId'] as String?,
-        ).catchError((_) {});
-        _handleClose();
-
-      case null:
-        break;
-    }
-  }
-
-  // ============================================================================
-  // Build WebView URL
-  // ============================================================================
-
-  String get _webViewUrl {
-    final base = Encatch.webHost;
-    final formId = widget.payload.formId;
-    final params = <String, String>{'formId': formId};
-    if (Encatch.debugMode) params['debug'] = 'true';
-    return '$base/s/flutter-sdk-form?${params.entries.map((e) => '${e.key}=${Uri.encodeComponent(e.value)}').join('&')}';
-  }
-
-  // ============================================================================
-  // Render
+  // Build
   // ============================================================================
 
   @override
@@ -854,7 +405,12 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
     final pos = _position;
     final alignment = _getPositionAlignment(pos);
     final borderRadius = _getBorderRadius(pos);
-    final popoverColor = _resolvePopoverColor(widget.payload);
+    final formTheme = resolveFormWebViewTheme(
+      widget.payload,
+      systemBrightness: MediaQuery.platformBrightnessOf(context),
+      debugLabel: 'EncatchWebView',
+    );
+    final backgroundColor = formTheme.backgroundColor;
     final overlayColor = _parseHexColor(
       (widget
                   .payload
@@ -873,6 +429,8 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
       'height=$_currentHeight',
     );
 
+    final skeletonMode = formTheme.activeMode;
+
     // Material is required so widgets like Text, InkWell work correctly
     // inside an OverlayEntry (which has no Material ancestor by default).
     return Material(
@@ -881,11 +439,11 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
         animation: _entranceController,
         builder: (context, child) {
           return Opacity(
-            opacity: _webViewReady ? _fadeAnimation.value : 0.0,
+            opacity: _webViewReady ? _fadeAnimation.value : 1.0,
             child: Container(
               width: double.infinity,
               height: double.infinity,
-              color: overlayColor,
+              color: _webViewReady ? overlayColor : Colors.transparent,
               child: AnimatedPadding(
                 duration: const Duration(milliseconds: 250),
                 curve: Curves.easeOut,
@@ -898,8 +456,9 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
                       maxWidth: maxWidth,
                       maxHeight: maxHeight,
                       borderRadius: borderRadius,
-                      popoverColor: popoverColor,
+                      backgroundColor: backgroundColor,
                       isCenter: isCenter,
+                      skeletonMode: skeletonMode,
                     ),
                   ],
                 ),
@@ -915,8 +474,9 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
     required double maxWidth,
     required double maxHeight,
     required BorderRadius borderRadius,
-    required Color popoverColor,
+    required Color backgroundColor,
     required bool isCenter,
+    required Brightness skeletonMode,
   }) {
     return Transform(
       transform: isCenter
@@ -939,163 +499,36 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
             borderRadius: borderRadius,
             clipBehavior: Clip.hardEdge,
             child: ColoredBox(
-              color: popoverColor,
+              color: backgroundColor,
               child: SizedBox(
                 width: maxWidth,
                 height: _heightAnimation.value.clamp(0.0, maxHeight).toDouble(),
-                child: _buildWebView(),
+                child: Stack(
+                  children: [
+                    EncatchFormWebViewBridge(
+                      payload: widget.payload,
+                      logTag: 'EncatchWebView',
+                      presentation: FormPresentation.modal,
+                      onReady: _handleBridgeReady,
+                      onClose: _handleClose,
+                      onHeightChange: _handleBridgeHeightChange,
+                      onForceFullHeight: _handleBridgeForceFullHeight,
+                    ),
+                    // Loading skeleton — shown until form:ready fires.
+                    if (!_webViewReady)
+                      Positioned.fill(
+                        child: FormWebViewSkeleton(
+                          backgroundColor: backgroundColor,
+                          activeMode: skeletonMode,
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
           );
         },
       ),
-    );
-  }
-
-  Widget _buildWebView() {
-    final url = _webViewUrl;
-    if (url.isEmpty) return const SizedBox.shrink();
-
-    return InAppWebView(
-      gestureRecognizers: {
-        Factory<OneSequenceGestureRecognizer>(() => EagerGestureRecognizer()),
-      },
-      initialUrlRequest: URLRequest(url: WebUri(url)),
-      initialSettings: InAppWebViewSettings(
-        javaScriptEnabled: true,
-        domStorageEnabled: true,
-        allowsInlineMediaPlayback: true,
-        mediaPlaybackRequiresUserGesture: false,
-        transparentBackground: true,
-        // Force the native WKWebView/WebView to fill its Flutter bounds
-        // rather than shrinking to content height.
-        useWideViewPort: false,
-        loadWithOverviewMode: false,
-        // Disable iOS rubber-band bounce effect
-        disallowOverScroll: true,
-      ),
-      onLoadStart: (controller, url) {
-        // ignore: avoid_print
-        print('[EncatchWebView] Load start: $url');
-      },
-      shouldOverrideUrlLoading: (controller, navigationAction) async {
-        final uri = navigationAction.request.url;
-        if (uri == null) return NavigationActionPolicy.ALLOW;
-
-        // Allow subframe navigation freely (e.g. Calendly/scheduler iframes)
-        if (navigationAction.isForMainFrame == false) {
-          return NavigationActionPolicy.ALLOW;
-        }
-
-        // Allow special schemes and data URLs in-page
-        final scheme = uri.scheme.toLowerCase();
-        if (scheme == 'about' || scheme == 'data' || scheme == 'blob') {
-          return NavigationActionPolicy.ALLOW;
-        }
-
-        // Custom schemes (upi://, intent://, etc.) cannot be loaded by
-        // WKWebView/Android WebView. Hand them to the OS instead.
-        if (scheme != 'https' && scheme != 'http') {
-          try {
-            await launchUrl(uri, mode: LaunchMode.externalApplication);
-          } catch (e) {
-            // ignore: avoid_print
-            print('[EncatchWebView] Failed to open external URL: $e');
-          }
-          return NavigationActionPolicy.CANCEL;
-        }
-
-        // Allow the initial form page load (same origin + path)
-        try {
-          final formUri = Uri.parse(url);
-          if (uri.origin == formUri.origin && uri.path == formUri.path) {
-            return NavigationActionPolicy.ALLOW;
-          }
-        } catch (_) {
-          return NavigationActionPolicy.CANCEL;
-        }
-
-        // Open all other http/https links in the system browser.
-        try {
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-        } catch (_) {
-          return NavigationActionPolicy.ALLOW;
-        }
-        return NavigationActionPolicy.CANCEL;
-      },
-      onWebViewCreated: (controller) {
-        _controller = controller;
-        controller.addJavaScriptHandler(
-          handlerName: 'EncatchFlutterChannel',
-          callback: (args) {
-            if (args.isEmpty) return;
-            try {
-              final raw = args[0] as String;
-              final msg = jsonDecode(raw) as Map<String, dynamic>;
-              _handleWebViewMessage(msg);
-            } catch (e) {
-              // ignore: avoid_print
-              print('[EncatchWebView] Failed to parse message: $e');
-            }
-          },
-        );
-      },
-      onPermissionRequest: (controller, request) async {
-        // ignore: avoid_print
-        print('[EncatchWebView] permission request: ${request.resources}');
-        return PermissionResponse(
-          resources: request.resources,
-          action: PermissionResponseAction.GRANT,
-        );
-      },
-      onLoadStop: (controller, url) {
-        // ignore: avoid_print
-        print('[EncatchWebView] Load stop: $url');
-        _logger.debug('WebView loaded: $url');
-        // Force html/body to fill the full native WebView frame so the
-        // Flutter ColoredBox background isn't visible behind short content.
-        controller
-            .evaluateJavascript(
-              source: '''
-          document.documentElement.style.height = '100%';
-          document.body.style.minHeight = '100%';
-        ''',
-            )
-            .catchError((_) {});
-        Timer(const Duration(milliseconds: 300), () {
-          if (!mounted || _webViewReady) return;
-          // On real iOS devices, the page can fire form:ready before
-          // flutter_inappwebview has injected its JS handler.
-          _handleFormReady(widget.payload.formId);
-        });
-      },
-      onReceivedHttpError: (controller, request, errorResponse) {
-        // ignore: avoid_print
-        print(
-          '[EncatchWebView] HTTP error: '
-          '${errorResponse.statusCode} ${errorResponse.reasonPhrase} '
-          '${request.url}',
-        );
-      },
-      onConsoleMessage: (controller, consoleMessage) {
-        // ignore: avoid_print
-        print(
-          '[EncatchWebView][console] '
-          '${consoleMessage.messageLevel}: ${consoleMessage.message}',
-        );
-      },
-      onWebContentProcessDidTerminate: (controller) {
-        // ignore: avoid_print
-        print('[EncatchWebView] Web content process terminated');
-      },
-      onReceivedError: (controller, request, error) {
-        // ignore: avoid_print
-        print('[EncatchWebView] Load error: ${error.description}');
-        if (request.isForMainFrame == false) return;
-        final scheme = request.url.scheme.toLowerCase();
-        if (scheme != 'https' && scheme != 'http') return;
-        _handleClose();
-      },
     );
   }
 }

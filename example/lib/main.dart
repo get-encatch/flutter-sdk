@@ -32,6 +32,7 @@ class MyApp extends StatelessWidget {
       routes: {
         '/': (context) => const HomeScreen(),
         '/settings': (context) => const SettingsScreen(),
+        '/inline-demo': (context) => const InlineDemoScreen(),
       },
     );
   }
@@ -240,6 +241,90 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: _submitNativeForm,
               icon: const Icon(Icons.send),
               label: const Text('Submit Native Form'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.pushNamed(context, '/inline-demo'),
+              icon: const Icon(Icons.view_stream),
+              label: const Text('Inline Form Demo'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// Inline Demo Screen
+// ============================================================================
+
+/// Demonstrates EncatchInlineForm embedded inside a scrollable layout.
+///
+/// The form renders inline — no modal overlay — and grows to its natural
+/// content height via form:resize messages. Scroll is handled by the host
+/// SingleChildScrollView; WebView internal scroll is disabled.
+///
+/// Route-focus tip: pass `enabled: ModalRoute.of(context)?.isCurrent ?? true`
+/// to prevent background tab screens from intercepting showForm calls meant
+/// for other screens or the modal fallback.
+class InlineDemoScreen extends StatelessWidget {
+  const InlineDemoScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Inline Form Demo'),
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Content above the form',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'The EncatchInlineForm below renders inside this layout rather '
+              'than as a fullscreen overlay. Trigger it via Encatch.showForm().',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 24),
+
+            // Inline form — exact-match slot for a specific form id.
+            // Replace 'your-form-slug' with a real form slug from your account.
+            EncatchInlineForm(
+              formId: 'your-form-slug',
+              enabled: ModalRoute.of(context)?.isCurrent ?? true,
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: Theme.of(context).dividerColor,
+                  width: 1,
+                ),
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+
+            const SizedBox(height: 24),
+            Text(
+              'Content below the form',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Tap the button to trigger a different form. Because no inline '
+              'slot matches that id, it falls back to the modal EncatchWebView.',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: () => Encatch.showForm('another-form-slug'),
+              icon: const Icon(Icons.open_in_new),
+              label: const Text('Trigger unmatched form → modal fallback'),
             ),
           ],
         ),

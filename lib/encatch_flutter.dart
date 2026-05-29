@@ -8,6 +8,7 @@
 library encatch_flutter;
 
 export 'src/encatch.dart' show Encatch;
+export 'src/encatch_inline_form.dart' show EncatchInlineForm;
 export 'src/encatch_provider.dart'
     show EncatchProvider, EncatchNavigatorObserver;
 export 'src/encatch_webview.dart' show EncatchWebView;
@@ -67,4 +68,5 @@ export 'src/types.dart'
         FormMessageTypeExt,
         SdkMessageType,
         SdkMessageTypeExt,
-        Preferences;
+        Preferences,
+        FormPresentation;
