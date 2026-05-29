@@ -1,7 +1,6 @@
+import 'package:encatch_flutter/src/form_presentation_registry.dart';
+import 'package:encatch_flutter/src/types.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import '../lib/src/form_presentation_registry.dart';
-import '../lib/src/types.dart';
 
 // Minimal ShowFormResponse stub for registry tests
 ShowFormResponse _makeConfig(String feedbackConfigurationId) {

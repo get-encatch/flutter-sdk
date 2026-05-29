@@ -20,7 +20,7 @@ void main() {
 
     test('delay 0 runs immediately', () {
       var fired = false;
-      final pending = PendingCompletionCta(
+      const pending = PendingCompletionCta(
         action: 'dismiss',
         surface: 'inApp',
         trigger: 'auto',
@@ -32,7 +32,7 @@ void main() {
     });
 
     test('delay > 0 defers execution', () {
-      final pending = PendingCompletionCta(
+      const pending = PendingCompletionCta(
         action: 'dismiss',
         surface: 'inApp',
         trigger: 'auto',
@@ -43,7 +43,7 @@ void main() {
     });
 
     test('cancel on new schedule replaces prior timer', () {
-      final pending = PendingCompletionCta(
+      const pending = PendingCompletionCta(
         action: 'dismiss',
         surface: 'inApp',
         trigger: 'auto',
@@ -52,7 +52,7 @@ void main() {
       PendingCompletionCtaScheduler.schedule('form-3', pending);
       PendingCompletionCtaScheduler.schedule(
         'form-3',
-        PendingCompletionCta(
+        const PendingCompletionCta(
           action: 'dismiss',
           surface: 'inApp',
           trigger: 'auto',

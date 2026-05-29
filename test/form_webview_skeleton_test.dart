@@ -1,7 +1,6 @@
+import 'package:encatch_flutter/src/form_webview_skeleton.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import '../lib/src/form_webview_skeleton.dart';
 
 void main() {
   group('FormWebViewSkeleton', () {

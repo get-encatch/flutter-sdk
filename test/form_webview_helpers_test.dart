@@ -1,8 +1,7 @@
-import 'package:flutter_test/flutter_test.dart';
+import 'package:encatch_flutter/src/form_webview_helpers.dart';
+import 'package:encatch_flutter/src/types.dart';
 import 'package:flutter/material.dart';
-
-import '../lib/src/form_webview_helpers.dart';
-import '../lib/src/types.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('buildFormWebViewUrl', () {

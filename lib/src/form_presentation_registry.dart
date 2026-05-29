@@ -92,8 +92,8 @@ PresentationTarget resolvePresentationTarget({
       if (candidateIds.contains(slot.formId)) {
         return InlineTarget(slotId: slot.slotId);
       }
-    } else if (firstWildcard == null) {
-      firstWildcard = slot;
+    } else {
+      firstWildcard ??= slot;
     }
   }
 
