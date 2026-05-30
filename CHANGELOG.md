@@ -1,3 +1,8 @@
+## 1.0.0
+- Stable release of the Encatch Flutter SDK.
+- Includes all features and fixes from the beta releases.
+- Ready for production use.
+
 ## 1.0.0-beta.3
 
 - **New:** Call to Action for thank you and exit screens now take you to in app browser / external browsers / in app navigation
