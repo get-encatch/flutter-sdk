@@ -24,7 +24,7 @@ import 'types.dart';
 // SDK version
 // ============================================================================
 
-const _sdkVersion = '1.0.0';
+const _sdkVersion = '1.0.1';
 
 // ============================================================================
 // API Endpoint paths
@@ -102,8 +102,10 @@ class Encatch {
 
   // Config
   static String? _apiKey;
-  static String _apiBaseUrl = 'https://app.encatch.com';
-  static String _webHost = 'https://app.encatch.com';
+  static const String _defaultApiBaseUrl = 'https://api.encatch.com';
+  static const String _defaultWebHost = 'https://form.encatch.com';
+  static String _apiBaseUrl = _defaultApiBaseUrl;
+  static String _webHost = _defaultWebHost;
   static bool _isFullScreen = false;
 
   // Identity
@@ -198,12 +200,14 @@ class Encatch {
 
     _apiKey = apiKey;
 
-    const defaultHost = 'https://app.encatch.com';
-    _apiBaseUrl = (config?.apiBaseUrl ?? defaultHost).replaceAll(
+    _apiBaseUrl = (config?.apiBaseUrl ?? _defaultApiBaseUrl).replaceAll(
       RegExp(r'/+$'),
       '',
     );
-    _webHost = (config?.webHost ?? _apiBaseUrl).replaceAll(RegExp(r'/+$'), '');
+    _webHost = (config?.webHost ?? _defaultWebHost).replaceAll(
+      RegExp(r'/+$'),
+      '',
+    );
     _isFullScreen = config?.isFullScreen ?? false;
     if (config?.theme != null) _theme = config!.theme!;
     _onBeforeShowForm = config?.onBeforeShowForm;

@@ -215,11 +215,11 @@ enum TriggerType {
 /// )
 /// ```
 class EncatchConfig {
-  /// Base URL for all API calls. Defaults to 'https://app.encatch.com'.
+  /// Base URL for all API calls. Defaults to 'https://api.encatch.com'.
   final String? apiBaseUrl;
 
   /// Base URL for loading the flutter-sdk-form WebView page.
-  /// Defaults to the same value as apiBaseUrl.
+  /// Defaults to 'https://form.encatch.com'.
   final String? webHost;
 
   /// Default theme for forms. Defaults to EncatchTheme.system.
@@ -1638,7 +1638,7 @@ class QnaWithAiConversationTurn {
   Map<String, dynamic> toJson() => {'question': question, 'answer': answer};
 }
 
-/// Request payload for the Q&A-with-AI API ([Encatch.qnaWithAi]).
+/// Request payload for the Q&A-with-AI API ([Encatch.streamQnaWithAi]).
 ///
 /// Provides the form question context and an ordered [conversation] history
 /// so the AI can generate a contextual follow-up answer.
@@ -1662,7 +1662,7 @@ class QnaWithAiRequest {
   };
 }
 
-/// Response returned by the Q&A-with-AI API ([Encatch.qnaWithAi]).
+/// Response returned by the Q&A-with-AI API ([Encatch.streamQnaWithAi]).
 ///
 /// Contains the AI-generated [answer] text for the submitted conversation turn.
 class QnaWithAiResponse {
