@@ -17,15 +17,22 @@ void main() {
       expect(config.appVersion, isNull);
     });
 
+    test('SDK defaults use production API and form hosts', () {
+      expect(Encatch.baseUrl, 'https://api.encatch.com');
+      expect(Encatch.webHost, 'https://form.encatch.com');
+    });
+
     test('values are set correctly', () {
       const config = EncatchConfig(
         apiBaseUrl: 'https://custom.encatch.com',
+        webHost: 'https://forms.custom.encatch.com',
         theme: EncatchTheme.dark,
         debugMode: true,
         isFullScreen: false,
         appVersion: '2.0.0',
       );
       expect(config.apiBaseUrl, 'https://custom.encatch.com');
+      expect(config.webHost, 'https://forms.custom.encatch.com');
       expect(config.theme, EncatchTheme.dark);
       expect(config.debugMode, true);
       expect(config.isFullScreen, false);

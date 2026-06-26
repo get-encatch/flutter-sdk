@@ -120,7 +120,8 @@ EncatchProvider(
     theme: EncatchTheme.system,
     debugMode: true,
     isFullScreen: false,
-    apiBaseUrl: 'https://app.encatch.com', // override for self-hosted
+    apiBaseUrl: 'https://api.encatch.com',
+    webHost: 'https://form.encatch.com',
   ),
   child: MyApp(),
 )

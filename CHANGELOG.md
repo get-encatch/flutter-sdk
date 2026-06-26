@@ -1,3 +1,7 @@
+## 1.0.1
+- Update default API host to `https://api.encatch.com`.
+- Update default form WebView host to `https://form.encatch.com`.
+
 ## 1.0.0
 - Stable release of the Encatch Flutter SDK.
 - Includes all features and fixes from the beta releases.
