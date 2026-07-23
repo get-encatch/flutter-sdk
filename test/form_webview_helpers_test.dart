@@ -255,4 +255,229 @@ void main() {
       expect(theme.backgroundColor, const Color(0xFF112233));
     });
   });
+
+  group('corner helpers', () {
+    Map<String, dynamic> appearanceProperties({
+      String? appearanceCorners,
+      String? legacyCorners,
+    }) {
+      return {
+        if (appearanceCorners != null)
+          'appearance': {'corners': appearanceCorners},
+        if (legacyCorners != null)
+          'featureSettings': {'corners': legacyCorners},
+      };
+    }
+
+    test(
+      'resolveCornersFromFormConfig prefers appearance.appearance.corners',
+      () {
+        expect(
+          resolveCornersFromFormConfig(
+            appearanceProperties(
+              appearanceCorners: 'round',
+              legacyCorners: 'sharp',
+            ),
+          ),
+          CornerStyle.round,
+        );
+      },
+    );
+
+    test(
+      'resolveCornersFromFormConfig falls back to featureSettings.corners',
+      () {
+        expect(
+          resolveCornersFromFormConfig(
+            appearanceProperties(legacyCorners: 'sharp'),
+          ),
+          CornerStyle.sharp,
+        );
+      },
+    );
+
+    test('resolveCornerRadiusPx maps presets', () {
+      expect(resolveCornerRadiusPx(CornerStyle.sharp), 2);
+      expect(resolveCornerRadiusPx(CornerStyle.soft), 10);
+      expect(resolveCornerRadiusPx(CornerStyle.round), 24);
+    });
+
+    test('getBorderRadii zeros screen-touching corners for top-left', () {
+      final radius = getBorderRadii('top-left', corners: CornerStyle.soft);
+      expect(radius.topLeft, Radius.zero);
+      expect(radius.topRight, Radius.zero);
+      expect(radius.bottomLeft, Radius.zero);
+      expect(radius.bottomRight, const Radius.circular(10));
+    });
+
+    test('getBorderRadii is zero for full-center', () {
+      expect(
+        getBorderRadii('full-center', corners: CornerStyle.round),
+        BorderRadius.zero,
+      );
+    });
+
+    test('getBorderRadii rounds all corners for middle-center', () {
+      final radius = getBorderRadii(
+        'middle-center',
+        corners: CornerStyle.round,
+      );
+      expect(radius, BorderRadius.circular(24));
+    });
+
+    test('getInlineBorderRadii uses uniform preset radius', () {
+      expect(
+        getInlineBorderRadii(corners: CornerStyle.sharp),
+        BorderRadius.circular(2),
+      );
+    });
+  });
+
+  group('inApp layout helpers', () {
+    test('resolveInAppSizeFromFormConfig reads inApp.size', () {
+      expect(
+        resolveInAppSizeFromFormConfig({
+          'inApp': {'size': 'compact'},
+          'featureSettings': {'inAppSize': 'spacious'},
+        }),
+        InAppSize.compact,
+      );
+    });
+
+    test('resolveSelectedPositionFromFormConfig prefers inApp.position', () {
+      expect(
+        resolveSelectedPositionFromFormConfig({
+          'inApp': {'position': 'full-center'},
+          'selectedPosition': 'middle-center',
+        }),
+        'full-center',
+      );
+    });
+
+    test('normalizePosition collapses left/right on mobile', () {
+      expect(normalizePosition('top-left', 390), 'top-center');
+      expect(normalizePosition('full-center', 390), 'full-center');
+      expect(normalizePosition('top-left', 800), 'top-left');
+    });
+
+    test('resolveInAppMaxWidthPx uses centered presets', () {
+      expect(
+        resolveInAppMaxWidthPx(InAppSize.compact, 'middle-center', 1200),
+        480,
+      );
+      expect(
+        resolveInAppMaxWidthPx(InAppSize.spacious, 'full-center', 1200),
+        1200,
+      );
+    });
+
+    test('resolveInAppMaxWidthPx uses corner presets', () {
+      expect(
+        resolveInAppMaxWidthPx(InAppSize.standard, 'bottom-right', 1200),
+        400,
+      );
+    });
+
+    test(
+      'resolveMaxHeightFractionFromFormConfig reads inApp.maxHeightPercent',
+      () {
+        expect(
+          resolveMaxHeightFractionFromFormConfig({
+            'inApp': {'maxHeightPercent': 65},
+            'featureSettings': {'maxDialogHeightPercentInApp': 80},
+          }),
+          0.65,
+        );
+      },
+    );
+
+    test('resolveMaxDialogHeightPx uses viewport fraction only', () {
+      expect(
+        resolveMaxDialogHeightPx(
+          position: 'middle-center',
+          usableHeightPx: 800,
+          maxHeightFraction: 0.8,
+        ),
+        640,
+      );
+    });
+
+    test('resolveMaxDialogHeightPx uses 95% when keyboard is open', () {
+      expect(
+        resolveMaxDialogHeightPx(
+          position: 'middle-center',
+          usableHeightPx: 800,
+          maxHeightFraction: 0.8,
+          keyboardVisible: true,
+        ),
+        760,
+      );
+    });
+
+    test('resolveMaxDialogHeightPx full-center uses full usable height', () {
+      expect(
+        resolveMaxDialogHeightPx(
+          position: 'full-center',
+          usableHeightPx: 750,
+          maxHeightFraction: 0.8,
+        ),
+        750,
+      );
+    });
+  });
+
+  group('modal overlay helpers', () {
+    test('resolveDarkOverlayFromFormConfig prefers inApp.darkOverlay', () {
+      expect(
+        resolveDarkOverlayFromFormConfig({
+          'inApp': {'darkOverlay': true},
+          'featureSettings': {'darkOverlay': false},
+        }),
+        isTrue,
+      );
+      expect(
+        resolveDarkOverlayFromFormConfig({
+          'featureSettings': {'darkOverlay': false},
+        }),
+        isFalse,
+      );
+    });
+
+    test(
+      'resolveModalOverlayBackgroundColor is transparent when darkOverlay off',
+      () {
+        expect(
+          resolveModalOverlayBackgroundColor(
+            appearanceProperties: const {},
+            activeMode: Brightness.light,
+            darkOverlay: false,
+          ),
+          Colors.transparent,
+        );
+      },
+    );
+
+    test('resolveModalOverlayBackgroundColor uses theme overlayColor', () {
+      final color = resolveModalOverlayBackgroundColor(
+        appearanceProperties: {
+          'themes': {
+            'light': {'overlayColor': '#112233'},
+          },
+        },
+        activeMode: Brightness.light,
+        darkOverlay: true,
+      );
+      expect(color, const Color(0x66112233));
+    });
+
+    test(
+      'getOverlayColorFromTheme reads overlayColor from theme JSON vars',
+      () {
+        expect(
+          getOverlayColorFromTheme({'theme': '{"--overlay":"#445566"}'}),
+          '#445566',
+        );
+      },
+    );
+  });
 }

@@ -1,3 +1,8 @@
+## 1.1.0
+- Align in-app modal appearance and animations with React Native parity.
+- Apply form corner presets, in-app size/position layout, dark overlay, frosted backdrop, and drop shadow styling.
+- Start modal entrance and backdrop fade on showForm for smoother loading UX.
+
 ## 1.0.1
 - Update default API host to `https://api.encatch.com`.
 - Update default form WebView host to `https://form.encatch.com`.

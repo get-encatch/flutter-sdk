@@ -282,36 +282,47 @@ class _EncatchInlineFormState extends State<EncatchInlineForm> {
     );
     final backgroundColor = formTheme.backgroundColor;
     final brightness = formTheme.activeMode;
+    final corners = resolveCornersFromFormConfig(
+      _activePayload!.formConfig.appearanceProperties,
+    );
+    final borderRadius = getInlineBorderRadii(corners: corners);
 
-    final child = SizedBox(
-      width: double.infinity,
-      height: _widgetHeight,
-      child: Stack(
-        children: [
-          EncatchFormWebViewBridge(
-            key: ObjectKey(_activePayload),
-            payload: _activePayload!,
-            logTag: 'EncatchInlineForm',
-            presentation: FormPresentation.inline,
-            onReady: _onBridgeReady,
-            onClose: _onBridgeClose,
-            onHeightChange: _onHeightChange,
-            onForceFullHeight: _onForceFullHeight,
-          ),
-          if (!_webViewReady)
-            Positioned.fill(
-              child: FormWebViewSkeleton(
-                backgroundColor: backgroundColor,
-                activeMode: brightness,
-              ),
+    final shellDecoration = widget.decoration != null
+        ? widget.decoration!.copyWith(
+            borderRadius: widget.decoration!.borderRadius ?? borderRadius,
+            color: widget.decoration!.color ?? backgroundColor,
+          )
+        : BoxDecoration(color: backgroundColor, borderRadius: borderRadius);
+
+    return ClipRRect(
+      borderRadius: borderRadius,
+      clipBehavior: Clip.hardEdge,
+      child: Container(
+        width: double.infinity,
+        height: _widgetHeight,
+        decoration: shellDecoration,
+        child: Stack(
+          children: [
+            EncatchFormWebViewBridge(
+              key: ObjectKey(_activePayload),
+              payload: _activePayload!,
+              logTag: 'EncatchInlineForm',
+              presentation: FormPresentation.inline,
+              onReady: _onBridgeReady,
+              onClose: _onBridgeClose,
+              onHeightChange: _onHeightChange,
+              onForceFullHeight: _onForceFullHeight,
             ),
-        ],
+            if (!_webViewReady)
+              Positioned.fill(
+                child: FormWebViewSkeleton(
+                  backgroundColor: backgroundColor,
+                  activeMode: brightness,
+                ),
+              ),
+          ],
+        ),
       ),
     );
-
-    if (widget.decoration != null) {
-      return Container(decoration: widget.decoration, child: child);
-    }
-    return child;
   }
 }
