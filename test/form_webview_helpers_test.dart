@@ -257,7 +257,10 @@ void main() {
   });
 
   group('corner helpers', () {
-    Map<String, dynamic> appearanceProperties({String? appearanceCorners, String? legacyCorners}) {
+    Map<String, dynamic> appearanceProperties({
+      String? appearanceCorners,
+      String? legacyCorners,
+    }) {
       return {
         if (appearanceCorners != null)
           'appearance': {'corners': appearanceCorners},
@@ -266,24 +269,32 @@ void main() {
       };
     }
 
-    test('resolveCornersFromFormConfig prefers appearance.appearance.corners', () {
-      expect(
-        resolveCornersFromFormConfig(
-          appearanceProperties(
-            appearanceCorners: 'round',
-            legacyCorners: 'sharp',
+    test(
+      'resolveCornersFromFormConfig prefers appearance.appearance.corners',
+      () {
+        expect(
+          resolveCornersFromFormConfig(
+            appearanceProperties(
+              appearanceCorners: 'round',
+              legacyCorners: 'sharp',
+            ),
           ),
-        ),
-        CornerStyle.round,
-      );
-    });
+          CornerStyle.round,
+        );
+      },
+    );
 
-    test('resolveCornersFromFormConfig falls back to featureSettings.corners', () {
-      expect(
-        resolveCornersFromFormConfig(appearanceProperties(legacyCorners: 'sharp')),
-        CornerStyle.sharp,
-      );
-    });
+    test(
+      'resolveCornersFromFormConfig falls back to featureSettings.corners',
+      () {
+        expect(
+          resolveCornersFromFormConfig(
+            appearanceProperties(legacyCorners: 'sharp'),
+          ),
+          CornerStyle.sharp,
+        );
+      },
+    );
 
     test('resolveCornerRadiusPx maps presets', () {
       expect(resolveCornerRadiusPx(CornerStyle.sharp), 2);
@@ -300,11 +311,17 @@ void main() {
     });
 
     test('getBorderRadii is zero for full-center', () {
-      expect(getBorderRadii('full-center', corners: CornerStyle.round), BorderRadius.zero);
+      expect(
+        getBorderRadii('full-center', corners: CornerStyle.round),
+        BorderRadius.zero,
+      );
     });
 
     test('getBorderRadii rounds all corners for middle-center', () {
-      final radius = getBorderRadii('middle-center', corners: CornerStyle.round);
+      final radius = getBorderRadii(
+        'middle-center',
+        corners: CornerStyle.round,
+      );
       expect(radius, BorderRadius.circular(24));
     });
 
@@ -345,43 +362,34 @@ void main() {
 
     test('resolveInAppMaxWidthPx uses centered presets', () {
       expect(
-        resolveInAppMaxWidthPx(
-          InAppSize.compact,
-          'middle-center',
-          1200,
-        ),
+        resolveInAppMaxWidthPx(InAppSize.compact, 'middle-center', 1200),
         480,
       );
       expect(
-        resolveInAppMaxWidthPx(
-          InAppSize.spacious,
-          'full-center',
-          1200,
-        ),
+        resolveInAppMaxWidthPx(InAppSize.spacious, 'full-center', 1200),
         1200,
       );
     });
 
     test('resolveInAppMaxWidthPx uses corner presets', () {
       expect(
-        resolveInAppMaxWidthPx(
-          InAppSize.standard,
-          'bottom-right',
-          1200,
-        ),
+        resolveInAppMaxWidthPx(InAppSize.standard, 'bottom-right', 1200),
         400,
       );
     });
 
-    test('resolveMaxHeightFractionFromFormConfig reads inApp.maxHeightPercent', () {
-      expect(
-        resolveMaxHeightFractionFromFormConfig({
-          'inApp': {'maxHeightPercent': 65},
-          'featureSettings': {'maxDialogHeightPercentInApp': 80},
-        }),
-        0.65,
-      );
-    });
+    test(
+      'resolveMaxHeightFractionFromFormConfig reads inApp.maxHeightPercent',
+      () {
+        expect(
+          resolveMaxHeightFractionFromFormConfig({
+            'inApp': {'maxHeightPercent': 65},
+            'featureSettings': {'maxDialogHeightPercentInApp': 80},
+          }),
+          0.65,
+        );
+      },
+    );
 
     test('resolveMaxDialogHeightPx uses viewport fraction only', () {
       expect(
@@ -435,16 +443,19 @@ void main() {
       );
     });
 
-    test('resolveModalOverlayBackgroundColor is transparent when darkOverlay off', () {
-      expect(
-        resolveModalOverlayBackgroundColor(
-          appearanceProperties: const {},
-          activeMode: Brightness.light,
-          darkOverlay: false,
-        ),
-        Colors.transparent,
-      );
-    });
+    test(
+      'resolveModalOverlayBackgroundColor is transparent when darkOverlay off',
+      () {
+        expect(
+          resolveModalOverlayBackgroundColor(
+            appearanceProperties: const {},
+            activeMode: Brightness.light,
+            darkOverlay: false,
+          ),
+          Colors.transparent,
+        );
+      },
+    );
 
     test('resolveModalOverlayBackgroundColor uses theme overlayColor', () {
       final color = resolveModalOverlayBackgroundColor(
@@ -459,13 +470,14 @@ void main() {
       expect(color, const Color(0x66112233));
     });
 
-    test('getOverlayColorFromTheme reads overlayColor from theme JSON vars', () {
-      expect(
-        getOverlayColorFromTheme({
-          'theme': '{"--overlay":"#445566"}',
-        }),
-        '#445566',
-      );
-    });
+    test(
+      'getOverlayColorFromTheme reads overlayColor from theme JSON vars',
+      () {
+        expect(
+          getOverlayColorFromTheme({'theme': '{"--overlay":"#445566"}'}),
+          '#445566',
+        );
+      },
+    );
   });
 }

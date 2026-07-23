@@ -292,10 +292,7 @@ class _EncatchInlineFormState extends State<EncatchInlineForm> {
             borderRadius: widget.decoration!.borderRadius ?? borderRadius,
             color: widget.decoration!.color ?? backgroundColor,
           )
-        : BoxDecoration(
-            color: backgroundColor,
-            borderRadius: borderRadius,
-          );
+        : BoxDecoration(color: backgroundColor, borderRadius: borderRadius);
 
     return ClipRRect(
       borderRadius: borderRadius,

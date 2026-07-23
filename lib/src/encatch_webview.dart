@@ -168,9 +168,9 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
       widget.payload.formConfig.appearanceProperties;
 
   String _effectivePosition(double screenWidth) => normalizePosition(
-        resolveSelectedPositionFromFormConfig(_appearanceProperties),
-        screenWidth,
-      );
+    resolveSelectedPositionFromFormConfig(_appearanceProperties),
+    screenWidth,
+  );
 
   @override
   void initState() {
@@ -227,7 +227,8 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
   double _usableHeight(MediaQueryData mediaQuery) {
     final padding = mediaQuery.padding;
     final keyboardInset = mediaQuery.viewInsets.bottom;
-    final height = mediaQuery.size.height -
+    final height =
+        mediaQuery.size.height -
         padding.top -
         (keyboardInset > 0 ? 0 : padding.bottom) -
         keyboardInset;
@@ -239,8 +240,9 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
     String effectivePosition,
   ) {
     final usableHeight = _usableHeight(mediaQuery);
-    final maxHeightFraction =
-        resolveMaxHeightFractionFromFormConfig(_appearanceProperties);
+    final maxHeightFraction = resolveMaxHeightFractionFromFormConfig(
+      _appearanceProperties,
+    );
     return resolveMaxDialogHeightPx(
       position: effectivePosition,
       usableHeightPx: usableHeight,
@@ -373,8 +375,9 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
     final effectivePosition = _effectivePosition(screenSize.width);
     _isFullCenter = effectivePosition == 'full-center';
     final inAppSize = resolveInAppSizeFromFormConfig(appearanceProperties);
-    final horizontalSafeInset =
-        (safePadding.left > safePadding.right ? safePadding.left : safePadding.right);
+    final horizontalSafeInset = (safePadding.left > safePadding.right
+        ? safePadding.left
+        : safePadding.right);
     final popupWidth = resolveInAppMaxWidthPx(
       inAppSize,
       effectivePosition,
@@ -382,8 +385,10 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
       horizontalInsetPx: _isFullCenter ? 0 : horizontalSafeInset,
     );
     final usableHeight = _usableHeight(mediaQuery);
-    _maxDialogHeightPx =
-        _resolveMaxDialogHeightPx(mediaQuery, effectivePosition);
+    _maxDialogHeightPx = _resolveMaxDialogHeightPx(
+      mediaQuery,
+      effectivePosition,
+    );
     final maxHeight = _maxDialogHeightPx;
     final forcedHeight = usableHeight * 0.95;
     final usesFixedViewportHeight = _useTallMaxHeight;
@@ -524,9 +529,7 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
               builder: (context, child) {
                 final popupHeight = usesFixedViewportHeight
                     ? forcedHeight
-                    : _heightAnimation.value
-                        .clamp(0.0, maxHeight)
-                        .toDouble();
+                    : _heightAnimation.value.clamp(0.0, maxHeight).toDouble();
                 // The drop shadow lives on this outer DecoratedBox so it isn't
                 // cut off by the ClipRRect below, which clips the rounded
                 // corners of the actual popup content.

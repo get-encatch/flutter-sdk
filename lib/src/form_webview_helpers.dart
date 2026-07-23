@@ -315,7 +315,10 @@ double resolveInAppMaxWidthPx(
   double screenWidth, {
   double horizontalInsetPx = 0,
 }) {
-  final available = (screenWidth - horizontalInsetPx * 2).clamp(100.0, double.infinity);
+  final available = (screenWidth - horizontalInsetPx * 2).clamp(
+    100.0,
+    double.infinity,
+  );
   if (position == 'full-center') return available;
 
   final centered = isCenterAlignedPosition(position);
@@ -342,7 +345,8 @@ double resolveMaxHeightFractionFromFormConfig(
   final featureSettings =
       appearanceProperties?['featureSettings'] as Map<String, dynamic>?;
   final raw =
-      inApp?['maxHeightPercent'] ?? featureSettings?['maxDialogHeightPercentInApp'];
+      inApp?['maxHeightPercent'] ??
+      featureSettings?['maxDialogHeightPercentInApp'];
   if (raw is num) return (raw.toDouble() / 100.0).clamp(0.1, 1.0);
   return 0.8;
 }
@@ -406,7 +410,12 @@ PositionAlignment getPositionAlignment(String position) {
 // Modal overlay / darkOverlay — mirrors RN form-webview-helpers.ts
 // ============================================================================
 
-const Color _defaultOverlayColor = Color.fromARGB(128, 0, 0, 0); // rgba(0,0,0,0.5)
+const Color _defaultOverlayColor = Color.fromARGB(
+  128,
+  0,
+  0,
+  0,
+); // rgba(0,0,0,0.5)
 const double _overlayFallbackAlpha = 0.4;
 
 /// Reads inApp.darkOverlay with legacy featureSettings.darkOverlay fallback.
@@ -435,7 +444,8 @@ String getOverlayColorFromTheme(Map<String, dynamic>? themeConfig) {
 
   try {
     final vars = jsonDecode(themeJson as String) as Map<String, dynamic>;
-    final color = vars['overlayColor'] ??
+    final color =
+        vars['overlayColor'] ??
         vars['--encatch-overlay-color'] ??
         vars['--overlay'] ??
         vars['--popover'];
@@ -463,12 +473,7 @@ Color? parseOverlayColorWithAlpha(
     final g = _parseRgbChannel(rgbOnly.group(2));
     final b = _parseRgbChannel(rgbOnly.group(3));
     if (r != null && g != null && b != null) {
-      return Color.fromARGB(
-        (_overlayFallbackAlpha * 255).round(),
-        r,
-        g,
-        b,
-      );
+      return Color.fromARGB((_overlayFallbackAlpha * 255).round(), r, g, b);
     }
   }
 
