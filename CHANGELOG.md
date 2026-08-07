@@ -1,3 +1,6 @@
+## 1.1.1
+- Add `projectI18nFileUrl` to `ShowFormResponse` for multi-language form i18n packs.
+
 ## 1.1.0
 - Align in-app modal appearance and animations with React Native parity.
 - Apply form corner presets, in-app size/position layout, dark overlay, frosted backdrop, and drop shadow styling.
