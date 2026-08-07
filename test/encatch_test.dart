@@ -278,6 +278,34 @@ void main() {
     });
   });
 
+  group('ShowFormResponse form i18n URL', () {
+    test('preserves projectI18nFileUrl through JSON conversion', () {
+      const url = 'https://assets.encatch.com/project/form-i18n/v12.json';
+      final response = ShowFormResponse.fromJson({
+        'feedbackConfigurationId': 'form-123',
+        'projectI18nFileUrl': url,
+      });
+
+      expect(response.projectI18nFileUrl, url);
+      expect(response.toJson()['projectI18nFileUrl'], url);
+    });
+
+    test('accepts missing or null projectI18nFileUrl', () {
+      final missing = ShowFormResponse.fromJson({
+        'feedbackConfigurationId': 'form-123',
+      });
+      final explicitlyNull = ShowFormResponse.fromJson({
+        'feedbackConfigurationId': 'form-123',
+        'projectI18nFileUrl': null,
+      });
+
+      expect(missing.projectI18nFileUrl, isNull);
+      expect(explicitlyNull.projectI18nFileUrl, isNull);
+      expect(missing.toJson(), isNot(contains('projectI18nFileUrl')));
+      expect(explicitlyNull.toJson(), isNot(contains('projectI18nFileUrl')));
+    });
+  });
+
   group('IdentifyUserResponse.fromJson', () {
     test('parses complete response', () {
       final res = IdentifyUserResponse.fromJson({

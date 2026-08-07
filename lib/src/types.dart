@@ -810,6 +810,11 @@ class ShowFormResponse {
   /// Contact properties returned by the server for Liquid variable substitution
   /// via the `{{ contact.key }}` syntax in form copy.
   final Map<String, dynamic>? contact;
+
+  /// Optional customer CDN URL for a multi-language form i18n JSON pack.
+  ///
+  /// When null or omitted, the form host uses its default language packs.
+  final String? projectI18nFileUrl;
   final int? pingAgainIn;
   final bool? pingOnNextPageVisit;
   final String? feedbackTransactions;
@@ -824,6 +829,7 @@ class ShowFormResponse {
     this.appearanceProperties,
     this.partialResponseEnabled,
     this.contact,
+    this.projectI18nFileUrl,
     this.pingAgainIn,
     this.pingOnNextPageVisit,
     this.feedbackTransactions,
@@ -842,6 +848,7 @@ class ShowFormResponse {
           json['appearanceProperties'] as Map<String, dynamic>?,
       partialResponseEnabled: json['partialResponseEnabled'] as bool?,
       contact: json['contact'] as Map<String, dynamic>?,
+      projectI18nFileUrl: json['projectI18nFileUrl'] as String?,
       pingAgainIn: json['pingAgainIn'] as int?,
       pingOnNextPageVisit: json['pingOnNextPageVisit'] as bool?,
       feedbackTransactions: json[r'$feedbackTransactions'] as String?,
@@ -870,6 +877,9 @@ class ShowFormResponse {
       map['partialResponseEnabled'] = partialResponseEnabled;
     }
     if (contact != null) map['contact'] = contact;
+    if (projectI18nFileUrl != null) {
+      map['projectI18nFileUrl'] = projectI18nFileUrl;
+    }
     if (pingAgainIn != null) map['pingAgainIn'] = pingAgainIn;
     if (pingOnNextPageVisit != null) {
       map['pingOnNextPageVisit'] = pingOnNextPageVisit;
