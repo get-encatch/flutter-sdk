@@ -30,6 +30,12 @@ enum QuestionType {
   multipleChoiceMultiple,
   shortAnswer,
   longText,
+
+  /// Deprecated: the `annotation` question type is no longer supported for new
+  /// forms. Kept for backward compatibility with existing configurations.
+  @Deprecated(
+    'The annotation question type is deprecated. Kept for backward compatibility.',
+  )
   annotation,
   welcome,
   thankYou,
@@ -55,6 +61,12 @@ enum QuestionType {
   videoAudio,
   scheduler,
   qnaWithAi,
+
+  /// Deprecated: the `payments_upi` question type is slated for removal.
+  /// Kept for backward compatibility with existing configurations.
+  @Deprecated(
+    'The payments_upi question type is deprecated. Kept for backward compatibility.',
+  )
   paymentsUpi,
 }
 
@@ -194,6 +206,195 @@ enum TriggerType {
 
   /// Triggered manually via [Encatch.showForm].
   manual,
+}
+
+/// Form title/description metadata returned by fetch-feedback APIs.
+class FormConfigurationResponse {
+  final String formTitle;
+  final String formDescription;
+  final int? respondentsCount;
+
+  const FormConfigurationResponse({
+    required this.formTitle,
+    required this.formDescription,
+    this.respondentsCount,
+  });
+
+  factory FormConfigurationResponse.fromJson(Map<String, dynamic> json) =>
+      FormConfigurationResponse(
+        formTitle: json['formTitle'] as String? ?? '',
+        formDescription: json['formDescription'] as String? ?? '',
+        respondentsCount: (json['respondentsCount'] as num?)?.toInt(),
+      );
+
+  Map<String, dynamic> toJson() {
+    final map = <String, dynamic>{
+      'formTitle': formTitle,
+      'formDescription': formDescription,
+    };
+    if (respondentsCount != null) map['respondentsCount'] = respondentsCount;
+    return map;
+  }
+}
+
+/// A single logic-jump rule evaluated during form navigation.
+class LogicJumpRule {
+  final Map<String, dynamic> jsonLogic;
+  final String targetQuestionId;
+
+  const LogicJumpRule({
+    required this.jsonLogic,
+    required this.targetQuestionId,
+  });
+
+  factory LogicJumpRule.fromJson(Map<String, dynamic> json) => LogicJumpRule(
+    jsonLogic: Map<String, dynamic>.from(json['jsonLogic'] as Map? ?? const {}),
+    targetQuestionId: json['targetQuestionId'] as String? ?? '',
+  );
+
+  Map<String, dynamic> toJson() => {
+    'jsonLogic': jsonLogic,
+    'targetQuestionId': targetQuestionId,
+  };
+}
+
+/// Supported completion CTA actions on thank_you and exit_form screens.
+enum CompletionCtaAction {
+  dismiss,
+  appNavigate,
+  redirectInternal,
+  redirectExternal,
+}
+
+/// Extension on [CompletionCtaAction] for wire-format serialization.
+extension CompletionCtaActionExt on CompletionCtaAction {
+  String get value {
+    switch (this) {
+      case CompletionCtaAction.dismiss:
+        return 'dismiss';
+      case CompletionCtaAction.appNavigate:
+        return 'app_navigate';
+      case CompletionCtaAction.redirectInternal:
+        return 'redirect_internal';
+      case CompletionCtaAction.redirectExternal:
+        return 'redirect_external';
+    }
+  }
+
+  static CompletionCtaAction? fromString(String value) {
+    switch (value) {
+      case 'dismiss':
+        return CompletionCtaAction.dismiss;
+      case 'app_navigate':
+        return CompletionCtaAction.appNavigate;
+      case 'redirect_internal':
+        return CompletionCtaAction.redirectInternal;
+      case 'redirect_external':
+        return CompletionCtaAction.redirectExternal;
+      default:
+        return null;
+    }
+  }
+}
+
+/// Per-surface completion CTA action (in-app vs shareable link).
+class PlatformCompletionCta {
+  final CompletionCtaAction action;
+  final String? route;
+  final String? url;
+
+  const PlatformCompletionCta({required this.action, this.route, this.url});
+
+  factory PlatformCompletionCta.fromJson(Map<String, dynamic> json) {
+    final action = CompletionCtaActionExt.fromString(
+      json['action'] as String? ?? '',
+    );
+    return PlatformCompletionCta(
+      action: action ?? CompletionCtaAction.dismiss,
+      route: json['route'] as String?,
+      url: json['url'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    final map = <String, dynamic>{'action': action.value};
+    if (route != null) map['route'] = route;
+    if (url != null) map['url'] = url;
+    return map;
+  }
+}
+
+/// Optional secondary button on thank_you completion CTAs.
+class CompletionCtaSecondary {
+  final String label;
+  final PlatformCompletionCta? inApp;
+  final PlatformCompletionCta? link;
+
+  const CompletionCtaSecondary({required this.label, this.inApp, this.link});
+
+  factory CompletionCtaSecondary.fromJson(
+    Map<String, dynamic> json,
+  ) => CompletionCtaSecondary(
+    label: json['label'] as String? ?? '',
+    inApp: json['inApp'] is Map<String, dynamic>
+        ? PlatformCompletionCta.fromJson(json['inApp'] as Map<String, dynamic>)
+        : null,
+    link: json['link'] is Map<String, dynamic>
+        ? PlatformCompletionCta.fromJson(json['link'] as Map<String, dynamic>)
+        : null,
+  );
+
+  Map<String, dynamic> toJson() {
+    final map = <String, dynamic>{'label': label};
+    if (inApp != null) map['inApp'] = inApp!.toJson();
+    if (link != null) map['link'] = link!.toJson();
+    return map;
+  }
+}
+
+/// Completion CTA configuration for thank_you and exit_form questions.
+class CompletionCta {
+  final String? label;
+  final int? autoTriggerDelayMs;
+  final PlatformCompletionCta? inApp;
+  final PlatformCompletionCta? link;
+  final CompletionCtaSecondary? secondary;
+
+  const CompletionCta({
+    this.label,
+    this.autoTriggerDelayMs,
+    this.inApp,
+    this.link,
+    this.secondary,
+  });
+
+  factory CompletionCta.fromJson(Map<String, dynamic> json) => CompletionCta(
+    label: json['label'] as String?,
+    autoTriggerDelayMs: (json['autoTriggerDelayMs'] as num?)?.toInt(),
+    inApp: json['inApp'] is Map<String, dynamic>
+        ? PlatformCompletionCta.fromJson(json['inApp'] as Map<String, dynamic>)
+        : null,
+    link: json['link'] is Map<String, dynamic>
+        ? PlatformCompletionCta.fromJson(json['link'] as Map<String, dynamic>)
+        : null,
+    secondary: json['secondary'] is Map<String, dynamic>
+        ? CompletionCtaSecondary.fromJson(
+            json['secondary'] as Map<String, dynamic>,
+          )
+        : null,
+  );
+
+  Map<String, dynamic> toJson() {
+    final map = <String, dynamic>{};
+    if (label != null) map['label'] = label;
+    if (autoTriggerDelayMs != null) {
+      map['autoTriggerDelayMs'] = autoTriggerDelayMs;
+    }
+    if (inApp != null) map['inApp'] = inApp!.toJson();
+    if (link != null) map['link'] = link!.toJson();
+    if (secondary != null) map['secondary'] = secondary!.toJson();
+    return map;
+  }
 }
 
 // ============================================================================
@@ -889,6 +1090,12 @@ class ShowFormResponse {
     }
     return map;
   }
+
+  /// Parses [formConfiguration] when the server returns the typed fetch-feedback shape.
+  FormConfigurationResponse? get typedFormConfiguration =>
+      formConfiguration == null
+      ? null
+      : FormConfigurationResponse.fromJson(formConfiguration!);
 }
 
 class DismissFormRequest {
@@ -1075,6 +1282,11 @@ class QuestionAnswer {
   final List<String>? nestedSelection;
   final String? shortAnswer;
   final String? longText;
+
+  /// Deprecated: part of the deprecated `annotation` question type.
+  @Deprecated(
+    'The annotation question type is deprecated. Kept for backward compatibility.',
+  )
   final AnnotationAnswer? annotation;
   final bool? yesNo;
   final bool? consent;
@@ -1106,6 +1318,9 @@ class QuestionAnswer {
   /// Ordered transcript of Q&A pairs from a qna_with_ai session.
   final List<QnaWithAiPair>? qnaWithAi;
   final PaymentsUpiAnswer? paymentsUpi;
+
+  /// Legacy free-text "other" value for single/multiple choice questions.
+  final String? others;
 
   const QuestionAnswer({
     this.nps,
@@ -1140,7 +1355,48 @@ class QuestionAnswer {
     this.scheduler,
     this.qnaWithAi,
     this.paymentsUpi,
+    this.others,
   });
+
+  factory QuestionAnswer.fromJson(Map<String, dynamic> json) => QuestionAnswer(
+    nps: (json['nps'] as num?)?.toInt(),
+    rating: (json['rating'] as num?)?.toInt(),
+    singleChoice: json['singleChoice'] as String?,
+    singleChoiceOther: json['singleChoiceOther'] as String?,
+    multipleChoiceMultiple: (json['multipleChoiceMultiple'] as List?)
+        ?.map((value) => '$value')
+        .toList(),
+    multipleChoiceOther: json['multipleChoiceOther'] as String?,
+    nestedSelection: (json['nestedSelection'] as List?)
+        ?.map((value) => '$value')
+        .toList(),
+    shortAnswer: json['shortAnswer'] as String?,
+    longText: json['longText'] as String?,
+    yesNo: json['yesNo'] as bool?,
+    consent: json['consent'] as bool?,
+    ratingMatrix: json['ratingMatrix'] as Map<String, dynamic>?,
+    matrixSingleChoice: (json['matrixSingleChoice'] as Map?)?.map(
+      (key, value) => MapEntry('$key', '$value'),
+    ),
+    matrixMultipleChoice: (json['matrixMultipleChoice'] as Map?)?.map(
+      (key, value) => MapEntry(
+        '$key',
+        (value as List?)?.map((item) => '$item').toList() ?? const [],
+      ),
+    ),
+    date: json['date'] as String?,
+    csat: (json['csat'] as num?)?.toInt(),
+    opinionScale: (json['opinionScale'] as num?)?.toInt(),
+    ranking: (json['ranking'] as List?)?.map((value) => '$value').toList(),
+    pictureChoice: (json['pictureChoice'] as List?)
+        ?.map((value) => '$value')
+        .toList(),
+    pictureChoiceOther: json['pictureChoiceOther'] as String?,
+    email: json['email'] as String?,
+    number: json['number'] as String?,
+    website: json['website'] as String?,
+    others: json['others'] as String?,
+  );
 
   Map<String, dynamic> toJson() {
     final map = <String, dynamic>{};
@@ -1190,6 +1446,7 @@ class QuestionAnswer {
       map['qnaWithAi'] = qnaWithAi!.map((p) => p.toJson()).toList();
     }
     if (paymentsUpi != null) map['paymentsUpi'] = paymentsUpi!.toJson();
+    if (others != null) map['others'] = others;
     return map;
   }
 }
@@ -1214,6 +1471,9 @@ class AnnotationMarker {
 }
 
 /// Answer data for an annotation/drawing question type.
+@Deprecated(
+  'The annotation question type is deprecated. Kept for backward compatibility.',
+)
 class AnnotationAnswer {
   final String fileType;
   final String fileName;
@@ -1411,7 +1671,9 @@ class QnaWithAiPair {
 class PaymentsUpiAnswer {
   final String transactionId;
   final String encatchPaymentReference;
-  final double amount;
+
+  /// INR amount as a decimal string, matching the schema wire format.
+  final String amount;
   final String currency;
   final String payeeVpa;
   final String? payeeName;
@@ -1428,6 +1690,30 @@ class PaymentsUpiAnswer {
     this.sourceEmail,
     this.upiIntentUri,
   });
+
+  /// Convenience constructor that accepts a numeric amount and serializes it
+  /// as the schema-required decimal string.
+  factory PaymentsUpiAnswer.fromNumericAmount({
+    required String transactionId,
+    required String encatchPaymentReference,
+    required num amount,
+    String currency = 'INR',
+    required String payeeVpa,
+    String? payeeName,
+    String? sourceEmail,
+    String? upiIntentUri,
+  }) => PaymentsUpiAnswer(
+    transactionId: transactionId,
+    encatchPaymentReference: encatchPaymentReference,
+    amount: _formatUpiAmount(amount),
+    currency: currency,
+    payeeVpa: payeeVpa,
+    payeeName: payeeName,
+    sourceEmail: sourceEmail,
+    upiIntentUri: upiIntentUri,
+  );
+
+  static String _formatUpiAmount(num amount) => amount.toString();
 
   Map<String, dynamic> toJson() {
     final map = <String, dynamic>{
@@ -1451,22 +1737,112 @@ class QuestionResponse {
   final QuestionType? type;
   final QuestionAnswer? answer;
 
+  /// When true, serializes `"answer": null` for display-only or skipped questions.
+  final bool answerIsExplicitNull;
+
+  /// Validation error message when answer submission failed client-side.
+  final String? error;
+
   /// Whether this question was on the respondent's navigation path.
   /// Used for drop-off analysis.
   final bool? isOnPath;
+
+  /// Milliseconds the respondent spent on this question.
+  final int? timeSpentMs;
+
+  /// Whether this question was on the logical traversal path (including hidden
+  /// questions whose rules were evaluated).
+  final bool? isPathTraversed;
 
   const QuestionResponse({
     required this.questionId,
     this.type,
     this.answer,
+    this.answerIsExplicitNull = false,
+    this.error,
     this.isOnPath,
+    this.timeSpentMs,
+    this.isPathTraversed,
   });
+
+  factory QuestionResponse.fromJson(Map<String, dynamic> json) {
+    QuestionAnswer? answer;
+    var answerIsExplicitNull = false;
+    final rawAnswer = json['answer'];
+    if (rawAnswer == null) {
+      answerIsExplicitNull = json.containsKey('answer');
+    } else if (rawAnswer is Map<String, dynamic>) {
+      answer = QuestionAnswer.fromJson(rawAnswer);
+    }
+
+    return QuestionResponse(
+      questionId: json['questionId'] as String? ?? '',
+      type: QuestionTypeExt.fromString(json['type'] as String? ?? ''),
+      answer: answer,
+      answerIsExplicitNull: answerIsExplicitNull,
+      error: json['error'] as String?,
+      isOnPath: json['isOnPath'] as bool?,
+      timeSpentMs: (json['timeSpentMs'] as num?)?.toInt(),
+      isPathTraversed: json['isPathTraversed'] as bool?,
+    );
+  }
 
   Map<String, dynamic> toJson() {
     final map = <String, dynamic>{'questionId': questionId};
     if (type != null) map['type'] = type!.value;
-    if (answer != null) map['answer'] = answer!.toJson();
+    if (answer != null) {
+      map['answer'] = answer!.toJson();
+    } else if (answerIsExplicitNull) {
+      map['answer'] = null;
+    }
+    if (error != null) map['error'] = error;
     if (isOnPath != null) map['isOnPath'] = isOnPath;
+    if (timeSpentMs != null) map['timeSpentMs'] = timeSpentMs;
+    if (isPathTraversed != null) map['isPathTraversed'] = isPathTraversed;
+    return map;
+  }
+}
+
+/// Nested response payload inside [FormDetails.response].
+class FormDetailsResponse {
+  final List<QuestionResponse>? questions;
+  final Map<String, dynamic>? context;
+  final Map<String, dynamic>? contact;
+  final Map<String, String>? sourceTrackingFieldValues;
+
+  const FormDetailsResponse({
+    this.questions,
+    this.context,
+    this.contact,
+    this.sourceTrackingFieldValues,
+  });
+
+  factory FormDetailsResponse.fromJson(Map<String, dynamic> json) {
+    final rawQuestions = json['questions'];
+    return FormDetailsResponse(
+      questions: rawQuestions is List
+          ? rawQuestions
+                .whereType<Map<String, dynamic>>()
+                .map(QuestionResponse.fromJson)
+                .toList()
+          : null,
+      context: json['context'] as Map<String, dynamic>?,
+      contact: json['contact'] as Map<String, dynamic>?,
+      sourceTrackingFieldValues: (json['sourceTrackingFieldValues'] as Map?)
+          ?.map((key, value) => MapEntry('$key', '$value')),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    final map = <String, dynamic>{};
+    if (questions != null) {
+      map['questions'] = questions!.map((q) => q.toJson()).toList();
+    }
+    if (context != null) map['context'] = context;
+    if (contact != null) map['contact'] = contact;
+    if (sourceTrackingFieldValues != null) {
+      map['sourceTrackingFieldValues'] = sourceTrackingFieldValues;
+    }
     return map;
   }
 }
@@ -1506,6 +1882,10 @@ class FormDetails {
     this.contact,
     this.sourceTrackingFieldValues,
   });
+
+  /// Parses [response] into the typed submit-contract shape from `@encatch/schema`.
+  FormDetailsResponse? get typedResponse =>
+      response == null ? null : FormDetailsResponse.fromJson(response!);
 
   Map<String, dynamic> toJson() {
     final map = <String, dynamic>{'formConfigurationId': formConfigurationId};

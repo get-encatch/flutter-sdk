@@ -406,4 +406,110 @@ void main() {
       expect(json['status'], 200);
     });
   });
+
+  group('schema 1.5.2 submit contract', () {
+    test('QuestionResponse serializes analytics and null answer fields', () {
+      const response = QuestionResponse(
+        questionId: 'q-thank-you',
+        type: QuestionType.thankYou,
+        answerIsExplicitNull: true,
+        error: 'Please choose Yes or No.',
+        timeSpentMs: 1200,
+        isPathTraversed: true,
+        isOnPath: true,
+      );
+
+      expect(response.toJson(), {
+        'questionId': 'q-thank-you',
+        'type': 'thank_you',
+        'answer': null,
+        'error': 'Please choose Yes or No.',
+        'timeSpentMs': 1200,
+        'isPathTraversed': true,
+        'isOnPath': true,
+      });
+    });
+
+    test('QuestionResponse.fromJson preserves explicit null answer flag', () {
+      final response = QuestionResponse.fromJson({
+        'questionId': 'q-thank-you',
+        'type': 'thank_you',
+        'answer': null,
+        'timeSpentMs': 500,
+      });
+
+      expect(response.answerIsExplicitNull, isTrue);
+      expect(response.timeSpentMs, 500);
+    });
+
+    test('QuestionAnswer serializes legacy others field', () {
+      const answer = QuestionAnswer(others: 'Custom other text');
+      expect(answer.toJson(), {'others': 'Custom other text'});
+    });
+
+    test('PaymentsUpiAnswer serializes amount as string', () {
+      final answer = PaymentsUpiAnswer.fromNumericAmount(
+        transactionId: 'txn-1',
+        encatchPaymentReference: 'ref-1',
+        amount: 499.5,
+        payeeVpa: 'merchant@upi',
+      );
+
+      expect(answer.amount, '499.5');
+      expect(answer.toJson()['amount'], '499.5');
+    });
+
+    test('FormDetailsResponse round-trips nested question responses', () {
+      const payload = FormDetailsResponse(
+        questions: [
+          QuestionResponse(
+            questionId: 'q1',
+            type: QuestionType.rating,
+            answer: QuestionAnswer(rating: 5),
+          ),
+        ],
+        sourceTrackingFieldValues: {'utm_source': 'newsletter'},
+      );
+
+      final json = payload.toJson();
+      final parsed = FormDetailsResponse.fromJson(json);
+
+      expect(parsed.questions, hasLength(1));
+      expect(parsed.questions!.first.answer?.rating, 5);
+      expect(parsed.sourceTrackingFieldValues, {'utm_source': 'newsletter'});
+    });
+
+    test('CompletionCta parses per-surface actions', () {
+      final cta = CompletionCta.fromJson({
+        'label': 'Done',
+        'autoTriggerDelayMs': 1500,
+        'inApp': {'action': 'app_navigate', 'route': '/home'},
+        'secondary': {
+          'label': 'Close',
+          'inApp': {'action': 'dismiss'},
+        },
+      });
+
+      expect(cta.label, 'Done');
+      expect(cta.autoTriggerDelayMs, 1500);
+      expect(cta.inApp?.action, CompletionCtaAction.appNavigate);
+      expect(cta.inApp?.route, '/home');
+      expect(cta.secondary?.label, 'Close');
+      expect(cta.secondary?.inApp?.action, CompletionCtaAction.dismiss);
+    });
+
+    test('ShowFormResponse typedFormConfiguration parses respondentsCount', () {
+      const response = ShowFormResponse(
+        feedbackConfigurationId: 'cfg-1',
+        formConfiguration: {
+          'formTitle': 'Customer feedback',
+          'formDescription': 'Tell us more',
+          'respondentsCount': 42,
+        },
+      );
+
+      expect(response.typedFormConfiguration?.formTitle, 'Customer feedback');
+      expect(response.typedFormConfiguration?.respondentsCount, 42);
+    });
+  });
 }
