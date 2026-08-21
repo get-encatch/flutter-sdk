@@ -460,15 +460,15 @@ void main() {
     });
 
     test('FormDetailsResponse round-trips nested question responses', () {
-      final payload = FormDetailsResponse(
-        questions: const [
+      const payload = FormDetailsResponse(
+        questions: [
           QuestionResponse(
             questionId: 'q1',
             type: QuestionType.rating,
             answer: QuestionAnswer(rating: 5),
           ),
         ],
-        sourceTrackingFieldValues: const {'utm_source': 'newsletter'},
+        sourceTrackingFieldValues: {'utm_source': 'newsletter'},
       );
 
       final json = payload.toJson();

@@ -248,9 +248,7 @@ class LogicJumpRule {
   });
 
   factory LogicJumpRule.fromJson(Map<String, dynamic> json) => LogicJumpRule(
-    jsonLogic: Map<String, dynamic>.from(
-      json['jsonLogic'] as Map? ?? const {},
-    ),
+    jsonLogic: Map<String, dynamic>.from(json['jsonLogic'] as Map? ?? const {}),
     targetQuestionId: json['targetQuestionId'] as String? ?? '',
   );
 
@@ -305,11 +303,7 @@ class PlatformCompletionCta {
   final String? route;
   final String? url;
 
-  const PlatformCompletionCta({
-    required this.action,
-    this.route,
-    this.url,
-  });
+  const PlatformCompletionCta({required this.action, this.route, this.url});
 
   factory PlatformCompletionCta.fromJson(Map<String, dynamic> json) {
     final action = CompletionCtaActionExt.fromString(
@@ -336,26 +330,19 @@ class CompletionCtaSecondary {
   final PlatformCompletionCta? inApp;
   final PlatformCompletionCta? link;
 
-  const CompletionCtaSecondary({
-    required this.label,
-    this.inApp,
-    this.link,
-  });
+  const CompletionCtaSecondary({required this.label, this.inApp, this.link});
 
-  factory CompletionCtaSecondary.fromJson(Map<String, dynamic> json) =>
-      CompletionCtaSecondary(
-        label: json['label'] as String? ?? '',
-        inApp: json['inApp'] is Map<String, dynamic>
-            ? PlatformCompletionCta.fromJson(
-                json['inApp'] as Map<String, dynamic>,
-              )
-            : null,
-        link: json['link'] is Map<String, dynamic>
-            ? PlatformCompletionCta.fromJson(
-                json['link'] as Map<String, dynamic>,
-              )
-            : null,
-      );
+  factory CompletionCtaSecondary.fromJson(
+    Map<String, dynamic> json,
+  ) => CompletionCtaSecondary(
+    label: json['label'] as String? ?? '',
+    inApp: json['inApp'] is Map<String, dynamic>
+        ? PlatformCompletionCta.fromJson(json['inApp'] as Map<String, dynamic>)
+        : null,
+    link: json['link'] is Map<String, dynamic>
+        ? PlatformCompletionCta.fromJson(json['link'] as Map<String, dynamic>)
+        : null,
+  );
 
   Map<String, dynamic> toJson() {
     final map = <String, dynamic>{'label': label};
@@ -1715,17 +1702,16 @@ class PaymentsUpiAnswer {
     String? payeeName,
     String? sourceEmail,
     String? upiIntentUri,
-  }) =>
-      PaymentsUpiAnswer(
-        transactionId: transactionId,
-        encatchPaymentReference: encatchPaymentReference,
-        amount: _formatUpiAmount(amount),
-        currency: currency,
-        payeeVpa: payeeVpa,
-        payeeName: payeeName,
-        sourceEmail: sourceEmail,
-        upiIntentUri: upiIntentUri,
-      );
+  }) => PaymentsUpiAnswer(
+    transactionId: transactionId,
+    encatchPaymentReference: encatchPaymentReference,
+    amount: _formatUpiAmount(amount),
+    currency: currency,
+    payeeVpa: payeeVpa,
+    payeeName: payeeName,
+    sourceEmail: sourceEmail,
+    upiIntentUri: upiIntentUri,
+  );
 
   static String _formatUpiAmount(num amount) => amount.toString();
 
@@ -1842,10 +1828,8 @@ class FormDetailsResponse {
           : null,
       context: json['context'] as Map<String, dynamic>?,
       contact: json['contact'] as Map<String, dynamic>?,
-      sourceTrackingFieldValues:
-          (json['sourceTrackingFieldValues'] as Map?)?.map(
-            (key, value) => MapEntry('$key', '$value'),
-          ),
+      sourceTrackingFieldValues: (json['sourceTrackingFieldValues'] as Map?)
+          ?.map((key, value) => MapEntry('$key', '$value')),
     );
   }
 
