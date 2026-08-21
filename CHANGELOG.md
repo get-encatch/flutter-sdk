@@ -1,3 +1,9 @@
+## 1.1.2
+- Align submit-contract types with `@encatch/schema` 1.5.2: add `QuestionResponse.error`, `timeSpentMs`, `isPathTraversed`, explicit null answers, and `FormDetailsResponse`.
+- Change `PaymentsUpiAnswer.amount` to a decimal string (schema wire format) with `PaymentsUpiAnswer.fromNumericAmount` helper.
+- Add `QuestionAnswer.others` legacy field, completion CTA types, logic jump rule, and form configuration response types.
+- Mark deprecated `annotation` and `payments_upi` question types in public API docs.
+
 ## 1.1.1
 - Add `projectI18nFileUrl` to `ShowFormResponse` for multi-language form i18n packs.
 
