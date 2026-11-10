@@ -1,7 +1,5 @@
-// Step 3 (deduplication). Fails on 1.1.2 until the fix lands.
-@Tags(['pending-fix'])
-library;
-
+// Step 3 (deduplication): identical identify, event and screen calls are sent
+// once. These failed on 1.1.2.
 import 'package:encatch_flutter/encatch_flutter.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter/widgets.dart';
@@ -62,6 +60,34 @@ void main() {
     expect(api.count('identify-user'), 3, reason: 'locale differs');
   });
 
+  testFake('the same identify is sent again after one that failed', (
+    async,
+    api,
+  ) {
+    // Rejected outright (4xx): given up on at once.
+    api.scenario.faults = [Fault('identify-user', status: 400)];
+    Encatch.identifyUser('alice');
+    async.elapse(const Duration(seconds: 2));
+    expect(api.of('identify-user').single.status, 400);
+    Encatch.identifyUser('alice');
+    async.elapse(const Duration(seconds: 2));
+    expect(api.count('identify-user'), 2);
+    expect(api.of('identify-user').last.status, 200);
+
+    // Failing three times (5xx): given up on after the last attempt.
+    api.clearRequests();
+    api.scenario.faults = [Fault('identify-user', count: 3, status: 503)];
+    Encatch.identifyUser('bob');
+    async.elapse(const Duration(seconds: 3));
+    Encatch.identifyUser('bob'); // still retrying: skipped
+    async.elapse(const Duration(seconds: 10));
+    expect(api.count('identify-user'), 3);
+    Encatch.identifyUser('bob');
+    async.elapse(const Duration(seconds: 2));
+    expect(api.count('identify-user'), 4);
+    expect(Encatch.userId, api.expectedUserId('bob'));
+  });
+
   testFake('the same identify is sent again after a reset', (async, api) {
     identify(async, 'alice');
     Encatch.resetUser();
@@ -105,6 +131,35 @@ void main() {
     Encatch.trackScreen('/cart');
     Encatch.trackScreen('/home');
     async.elapse(const Duration(seconds: 2));
+    expect(screensOf(api), ['/home', '/cart', '/home']);
+  });
+
+  testFake('the observer tracks a route only when its name changes', (
+    async,
+    api,
+  ) {
+    Route<void> route(String? name) => PageRouteBuilder<void>(
+      settings: RouteSettings(name: name),
+      pageBuilder: (_, _, _) => const SizedBox(),
+    );
+    final observer = EncatchNavigatorObserver();
+    final home = route('/home');
+    final dialog = route(null);
+    final cart = route('/cart');
+
+    observer.didPush(home, null);
+    async.elapse(const Duration(seconds: 3));
+    // Opening and closing a dialog (an unnamed route) over the screen.
+    observer.didPush(dialog, home);
+    async.elapse(const Duration(seconds: 3));
+    observer.didPop(dialog, home);
+    async.elapse(const Duration(seconds: 3));
+    expect(screensOf(api), ['/home'], reason: 'not tracked a second time');
+
+    observer.didPush(cart, home);
+    async.elapse(const Duration(seconds: 3));
+    observer.didPop(cart, home);
+    async.elapse(const Duration(seconds: 3));
     expect(screensOf(api), ['/home', '/cart', '/home']);
   });
 

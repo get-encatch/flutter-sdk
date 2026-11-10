@@ -111,6 +111,11 @@ class _EncatchProviderState extends State<EncatchProvider> {
 /// )
 /// ```
 class EncatchNavigatorObserver extends NavigatorObserver {
+  /// The last route name this observer tracked. A route is tracked only when
+  /// its name differs from this, so closing a dialog or another unnamed route
+  /// does not track the screen underneath a second time.
+  String? _lastTracked;
+
   @override
   void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
     _trackRoute(route);
@@ -129,6 +134,8 @@ class EncatchNavigatorObserver extends NavigatorObserver {
   void _trackRoute(Route<dynamic> route) {
     final name = route.settings.name;
     if (name != null && name.isNotEmpty && name != '/') {
+      if (name == _lastTracked) return;
+      _lastTracked = name;
       Encatch.trackScreen(name).catchError((_) {});
     }
   }

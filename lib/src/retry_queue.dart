@@ -36,12 +36,16 @@ class _QueueItem {
   /// Earliest time (ms since the epoch) this item may be sent.
   int nextAttemptAt = 0;
 
+  /// Called when the item is given up on: a 4xx reply, or no attempts left.
+  final void Function()? onDropped;
+
   _QueueItem({
     required this.id,
     required this.fn,
     required this.label,
     this.maxRetries = _maxRetries,
     required this.createdAt,
+    this.onDropped,
   }) : retries = 0;
 }
 
@@ -144,6 +148,16 @@ Future<void> _drop(_QueueItem item) async {
   await _removeFromPersisted(item.id);
 }
 
+/// Gives up on [item]: it failed and will not be tried again.
+Future<void> _giveUp(_QueueItem item) async {
+  await _drop(item);
+  try {
+    item.onDropped?.call();
+  } catch (_) {
+    // a callback must not break the flush
+  }
+}
+
 /// The first queued item whose next attempt is due at [now], in queue order.
 _QueueItem? _firstDue(int now) {
   for (final item in _queue) {
@@ -161,10 +175,13 @@ _QueueItem? _firstDue(int now) {
 /// [label] is a human-readable name used for debug output.
 /// [fn] is the async function to execute (closure capturing the request payload).
 /// [maxRetries] is the number of attempts in all (default: 3).
+/// [onDropped] is called if the call is given up on (a 4xx reply, or no
+/// attempts left).
 void enqueue(
   String label,
   Future<void> Function() fn, {
   int maxRetries = _maxRetries,
+  void Function()? onDropped,
 }) {
   final now = internals.nowMs();
   final item = _QueueItem(
@@ -173,6 +190,7 @@ void enqueue(
     label: label,
     maxRetries: maxRetries,
     createdAt: now,
+    onDropped: onDropped,
   );
   _queue.add(item);
   _persistQueue();
@@ -206,7 +224,7 @@ Future<void> _run() async {
       await _drop(item);
     } catch (err) {
       if (_isClientError(err)) {
-        await _drop(item);
+        await _giveUp(item);
         internals.sdkLogger.debug(
           'Retry queue: dropping "${item.label}" (client error, no retry): $err',
         );
@@ -214,7 +232,7 @@ Future<void> _run() async {
       }
       item.retries += 1;
       if (item.retries >= item.maxRetries) {
-        await _drop(item);
+        await _giveUp(item);
         internals.sdkLogger.debug(
           'Retry queue: dropping "${item.label}" after ${item.maxRetries} attempts: $err',
         );

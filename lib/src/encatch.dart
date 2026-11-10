@@ -32,6 +32,10 @@ const _sdkVersion = '1.1.2';
 /// submit-form attempts in all when the API answers 429.
 const _submitAttemptsOn429 = 3;
 
+/// Identical trackEvent / trackScreen calls closer together than this are sent
+/// once.
+const _collapseWindowMs = 1000;
+
 // ============================================================================
 // API Endpoint paths
 // ============================================================================
@@ -156,6 +160,16 @@ class Encatch {
   // Interceptor
   static Future<bool> Function(ShowFormInterceptorPayload)? _onBeforeShowForm;
 
+  // Deduplication. The last identify sent or in flight; when each event name
+  // was last tracked; the last screen tracked and when.
+  static String? _lastIdentifyKey;
+  static final Map<String, int> _lastEventAt = {};
+  static String? _lastTrackedScreen;
+  static int _lastTrackedScreenAt = 0;
+
+  // A screen tracked before init finished; sent as soon as it has.
+  static String? _screenBeforeInit;
+
   // The latest identifyUser call made during a 429 pause, sent when it ends.
   static Future<void> Function()? _heldIdentify;
   static void Function()? _removePauseListener;
@@ -258,6 +272,13 @@ class Encatch {
     queue.startAppLifecycleListener();
     _removePauseListener ??= rate.onPauseEnd(_onPauseEnd);
 
+    // The first screen is usually pushed before init has finished.
+    final screenBeforeInit = _screenBeforeInit;
+    _screenBeforeInit = null;
+    if (screenBeforeInit != null) {
+      trackScreen(screenBeforeInit).catchError((_) {});
+    }
+
     // Flush any queued requests from a previous session
     queue.flush().catchError((_) {});
 
@@ -286,6 +307,12 @@ class Encatch {
           identifyUser(userName, traits: traits, options: options);
       return;
     }
+
+    // An identify with the same user, traits, locale, country and signature
+    // as the last one sent or in flight is skipped.
+    final identifyKey = _identifyKey(userName, traits, options);
+    if (identifyKey != null && identifyKey == _lastIdentifyKey) return;
+    _lastIdentifyKey = identifyKey;
 
     _userName = userName;
     await setUserName(userName);
@@ -327,41 +354,76 @@ class Encatch {
       feedbackTransactions: _feedbackTransactions,
     );
 
-    queue.enqueue('identifyUser', () async {
-      final res = await _post<IdentifyUserResponse>(
-        _endpoints['identifyUser']!,
-        req.toJson(),
-        IdentifyUserResponse.fromJson,
-        signatureTime: options?.secure?.generatedDateTimeinUTC,
-      );
-      if (res.userId != null) {
-        _userId = res.userId;
-        await setUserId(userName, res.userId!);
-      }
-      if (res.feedbackTransactions != null) {
-        _feedbackTransactions = res.feedbackTransactions;
-        await setFeedbackTransactions(userName, res.feedbackTransactions!);
-      }
-      _handleResponseMeta(
-        formConfigurationId: res.formConfigurationId,
-        pingAgainIn: res.pingAgainIn,
-        feedbackTransactions: res.feedbackTransactions,
-      );
-      if (res.formConfigurationId != null) {
-        await _showFormInternal(
-          res.formConfigurationId!,
-          triggerType: TriggerType.automatic,
+    queue.enqueue(
+      'identifyUser',
+      () async {
+        final res = await _post<IdentifyUserResponse>(
+          _endpoints['identifyUser']!,
+          req.toJson(),
+          IdentifyUserResponse.fromJson,
+          signatureTime: options?.secure?.generatedDateTimeinUTC,
         );
-      }
-      await startSession(
-        options: const StartSessionOptions(
-          skipImmediatePing: true,
-          skipImmediateTrackScreen: true,
-        ),
-      );
-    });
+        if (res.userId != null) {
+          _userId = res.userId;
+          await setUserId(userName, res.userId!);
+        }
+        if (res.feedbackTransactions != null) {
+          _feedbackTransactions = res.feedbackTransactions;
+          await setFeedbackTransactions(userName, res.feedbackTransactions!);
+        }
+        _handleResponseMeta(
+          formConfigurationId: res.formConfigurationId,
+          pingAgainIn: res.pingAgainIn,
+          feedbackTransactions: res.feedbackTransactions,
+        );
+        if (res.formConfigurationId != null) {
+          await _showFormInternal(
+            res.formConfigurationId!,
+            triggerType: TriggerType.automatic,
+          );
+        }
+        await startSession(
+          options: const StartSessionOptions(
+            skipImmediatePing: true,
+            skipImmediateTrackScreen: true,
+          ),
+        );
+      },
+      onDropped: () {
+        // The server never accepted it, so the same call must be sent again.
+        if (_lastIdentifyKey == identifyKey) _lastIdentifyKey = null;
+      },
+    );
 
     queue.flush().catchError((_) {});
+  }
+
+  /// A stable text form of an identify call, for spotting repeats. Null when
+  /// the traits can't be encoded, in which case the call is never skipped.
+  static String? _identifyKey(
+    String userName,
+    UserTraits? traits,
+    IdentifyOptions? options,
+  ) {
+    Map<String, dynamic>? plain(Map<String, dynamic>? map) => map?.map(
+      (k, v) => MapEntry(k, v is DateTime ? v.toIso8601String() : v),
+    );
+    try {
+      return jsonEncode([
+        userName,
+        plain(traits?.set),
+        plain(traits?.setOnce),
+        traits?.increment,
+        traits?.decrement,
+        traits?.unset,
+        options?.locale,
+        options?.country,
+        options?.secure?.signature,
+        options?.secure?.generatedDateTimeinUTC,
+      ]);
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Updates the user's locale preference and persists it.
@@ -387,6 +449,15 @@ class Encatch {
   static Future<void> trackEvent(String eventName) async {
     if (!_initialized || _isFullScreen) return;
     if (rate.isPaused(rate.Bucket.tracking)) return;
+
+    // Identical events within the window are sent once.
+    final now = internals.nowMs();
+    final lastAt = _lastEventAt[eventName];
+    if (lastAt != null && now - lastAt < _collapseWindowMs) return;
+    if (_lastEventAt.length > 100) {
+      _lastEventAt.removeWhere((_, at) => now - at >= _collapseWindowMs);
+    }
+    _lastEventAt[eventName] = now;
 
     final deviceInfo = await _buildDeviceInfo();
     final req = TrackEventRequest(
@@ -424,10 +495,25 @@ class Encatch {
 
   /// Tracks a screen navigation to [screenName] and checks for matching form triggers.
   static Future<void> trackScreen(String screenName) async {
-    if (!_initialized || _isFullScreen) return;
+    if (!_initialized) {
+      // Remembered, and sent once init has finished.
+      _screenBeforeInit = screenName;
+      return;
+    }
+    if (_isFullScreen) return;
 
     _currentScreen = screenName;
     if (rate.isPaused(rate.Bucket.tracking)) return;
+
+    // The same screen tracked again within the window is sent once. A visit
+    // away and back (A, B, A) is tracked in full.
+    final now = internals.nowMs();
+    if (screenName == _lastTrackedScreen &&
+        now - _lastTrackedScreenAt < _collapseWindowMs) {
+      return;
+    }
+    _lastTrackedScreen = screenName;
+    _lastTrackedScreenAt = now;
 
     final deviceInfo = await _buildDeviceInfo(screenName: screenName);
     final req = TrackScreenRequest(
@@ -815,6 +901,7 @@ class Encatch {
     final prevUserName = _userName;
     final prevUserId = _userId;
     _heldIdentify = null;
+    _lastIdentifyKey = null;
 
     if (prevUserName != null) {
       await clearUserId(prevUserName);
@@ -1022,6 +1109,7 @@ class Encatch {
     _dismissFormController.add(const DismissPayload());
     _isFormVisible = false;
     _heldIdentify = null;
+    _lastIdentifyKey = null;
     rate.clearPauses();
 
     await Future.wait([
@@ -1184,6 +1272,11 @@ class Encatch {
     rate.clearListenersForTest();
     _removePauseListener = null;
     _heldIdentify = null;
+    _lastIdentifyKey = null;
+    _lastEventAt.clear();
+    _lastTrackedScreen = null;
+    _lastTrackedScreenAt = 0;
+    _screenBeforeInit = null;
     await clearSession();
 
     _initialized = false;
