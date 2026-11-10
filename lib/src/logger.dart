@@ -18,6 +18,10 @@ class EncatchLogger {
 
   const EncatchLogger({required this.debugMode});
 
+  /// Receives every line the logger emits, as well as `dart:developer`. For
+  /// the SDK's own tests.
+  static void Function(String output, int level)? sink;
+
   static String get _timestamp => DateTime.now().toString().substring(11, 23);
 
   void debug(String message, [dynamic data]) {
@@ -69,7 +73,7 @@ class EncatchLogger {
     }
     buf.writeln();
     buf.writeln('Body:');
-    buf.writeln(_prettyJson(requestBody));
+    buf.writeln(_prettyJson(_maskBody(requestBody)));
 
     // ── Response or Error ─────────────────────────────
     if (error != null) {
@@ -108,7 +112,17 @@ class EncatchLogger {
 
   static void _emit2(String output, int level) {
     dev.log(output, name: 'Encatch', level: level);
+    sink?.call(output, level);
   }
+
+  /// The request body with secrets masked. The identify body carries the
+  /// secure-mode signature as `userSignature`.
+  static Map<String, dynamic> _maskBody(Map<String, dynamic> body) => {
+    for (final e in body.entries)
+      e.key: _shouldRedact(e.key) && e.value is String
+          ? _redact(e.value as String)
+          : e.value,
+  };
 
   static bool _shouldRedact(String headerName) {
     final lower = headerName.toLowerCase();

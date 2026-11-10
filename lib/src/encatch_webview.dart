@@ -17,6 +17,7 @@ import 'encatch.dart';
 import 'encatch_form_webview_bridge.dart';
 import 'form_webview_helpers.dart';
 import 'form_webview_skeleton.dart';
+import 'internals.dart' as internals;
 import 'modal_backdrop_blur.dart';
 import 'types.dart';
 
@@ -414,8 +415,7 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
       left: _isFullCenter ? 0 : safePadding.left,
       right: _isFullCenter ? 0 : safePadding.right,
     );
-    // ignore: avoid_print
-    print(
+    internals.sdkLogger.debug(
       '[EncatchWebView] build ready=$_webViewReady '
       'size=${screenSize.width}x${screenSize.height} '
       'keyboardInset=$keyboardInset maxHeight=$maxHeight '

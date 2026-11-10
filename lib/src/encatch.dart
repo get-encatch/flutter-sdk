@@ -22,12 +22,11 @@ import 'rate_limit.dart' as rate;
 import 'retry_queue.dart' as queue;
 import 'storage.dart';
 import 'types.dart';
+import 'version.dart';
 
 // ============================================================================
-// SDK version
+// Constants
 // ============================================================================
-
-const _sdkVersion = '1.1.2';
 
 /// submit-form attempts in all when the API answers 429.
 const _submitAttemptsOn429 = 3;
@@ -167,6 +166,10 @@ class Encatch {
   // Interceptor
   static Future<bool> Function(ShowFormInterceptorPayload)? _onBeforeShowForm;
 
+  // Optional debug hooks
+  static void Function(EncatchRequestInfo)? _onRequest;
+  static void Function(EncatchResponseInfo)? _onResponse;
+
   // Deduplication. The last identify sent or in flight; when each event name
   // was last tracked; the last screen tracked and when.
   static String? _lastIdentifyKey;
@@ -250,6 +253,8 @@ class Encatch {
     _isFullScreen = config?.isFullScreen ?? false;
     if (config?.theme != null) _theme = config!.theme!;
     _onBeforeShowForm = config?.onBeforeShowForm;
+    _onRequest = config?.onRequest;
+    _onResponse = config?.onResponse;
 
     _logger.debug('Initializing SDK...');
 
@@ -338,7 +343,10 @@ class Encatch {
     // An identify with the same user, traits, locale, country and signature
     // as the last one sent or in flight is skipped.
     final identifyKey = _identifyKey(userName, traits, options);
-    if (identifyKey != null && identifyKey == _lastIdentifyKey) return;
+    if (identifyKey != null && identifyKey == _lastIdentifyKey) {
+      _reportSkipped('identify-user', 'duplicate');
+      return;
+    }
     _lastIdentifyKey = identifyKey;
 
     return _serialized(
@@ -538,16 +546,24 @@ class Encatch {
   /// Tracks a custom [eventName] and checks for matching form triggers.
   static Future<void> trackEvent(String eventName) async {
     if (!_initialized || _isFullScreen) return;
-    if (_backgroundPaused) return;
+    if (_skippedWhilePaused('track-event')) return;
 
     // Identical events within the window are sent once.
     final now = internals.nowMs();
     final lastAt = _lastEventAt[eventName];
-    if (lastAt != null && now - lastAt < _collapseWindowMs) return;
+    if (lastAt != null && now - lastAt < _collapseWindowMs) {
+      _reportSkipped('track-event', 'collapsed');
+      return;
+    }
     if (_lastEventAt.length > 100) {
       _lastEventAt.removeWhere((_, at) => now - at >= _collapseWindowMs);
     }
     _lastEventAt[eventName] = now;
+
+    // Behind an identify or reset that is in progress, so a call made right
+    // after identifyUser(), not awaited, is queued after it and goes out as
+    // that user.
+    await _identityLock;
 
     final deviceInfo = await _buildDeviceInfo();
     final req = TrackEventRequest(
@@ -592,17 +608,19 @@ class Encatch {
     if (_isFullScreen) return;
 
     _currentScreen = screenName;
-    if (_backgroundPaused) return;
+    if (_skippedWhilePaused('track-screen')) return;
 
     // The same screen tracked again within the window is sent once. A visit
     // away and back (A, B, A) is tracked in full.
     final now = internals.nowMs();
     if (screenName == _lastTrackedScreen &&
         now - _lastTrackedScreenAt < _collapseWindowMs) {
+      _reportSkipped('track-screen', 'collapsed');
       return;
     }
     _lastTrackedScreen = screenName;
     _lastTrackedScreenAt = now;
+    await _identityLock;
 
     final deviceInfo = await _buildDeviceInfo(screenName: screenName);
     final req = TrackScreenRequest(
@@ -671,7 +689,10 @@ class Encatch {
   }) async {
     final formId = formConfigurationId ?? nextFeedbackId;
     if (formId == null) return;
-    if (_surveyBusy || _pendingAutoShow != null) return;
+    if (_surveyBusy || _pendingAutoShow != null) {
+      _reportSkipped('show-form', 'survey-open');
+      return;
+    }
 
     final delay = formConfigurationId != null ? 0 : (onPageDelay ?? 0);
     if (delay <= 0) {
@@ -698,14 +719,24 @@ class Encatch {
     TriggerType triggerType = TriggerType.manual,
   }) async {
     if (!_initialized) return;
-    if (rate.isPaused(rate.Bucket.showForm)) return;
+    if (rate.isPaused(rate.Bucket.showForm)) {
+      _reportSkipped('show-form', 'rate-limited');
+      return;
+    }
 
     // An automatic survey never interrupts one that is loading or open. A
     // manual show of the form that is already loading or open is ignored, so
     // answers in progress are kept; a different form still replaces it.
     if (triggerType == TriggerType.automatic) {
-      if (_surveyBusy || _signatureExpired) return;
+      if (_surveyBusy || _signatureExpired) {
+        _reportSkipped(
+          'show-form',
+          _surveyBusy ? 'survey-open' : 'signature-expired',
+        );
+        return;
+      }
     } else if (_isLoadingOrOpen(formId)) {
+      _reportSkipped('show-form', 'survey-open');
       return;
     }
 
@@ -900,6 +931,7 @@ class Encatch {
           _endpoints['submitForm']!,
           body,
           SubmitFormResponse.fromJson,
+          attempt: attempt,
         );
         break;
       } on EncatchHttpException catch (e) {
@@ -1023,8 +1055,12 @@ class Encatch {
   }
 
   static Future<void> _doPing() async {
-    if (!_initialized || _isFullScreen || _isFormVisible) return;
-    if (_backgroundPaused) return;
+    if (!_initialized || _isFullScreen) return;
+    if (_isFormVisible) {
+      _reportSkipped('ping', 'survey-open');
+      return;
+    }
+    if (_skippedWhilePaused('ping')) return;
 
     try {
       final deviceInfo = await _buildDeviceInfo();
@@ -1243,30 +1279,39 @@ class Encatch {
       );
     }
 
-    final buffer = StringBuffer();
-    await for (final chunk in streamedResponse.stream.transform(
-      const SystemEncoding().decoder,
-    )) {
-      for (final line in chunk.split('\n')) {
-        if (line.startsWith('data: ')) {
-          final data = line.substring(6).trim();
-          if (data == '[DONE]') break;
-          try {
-            final parsed = jsonDecode(data) as Map<String, dynamic>;
-            final delta =
-                parsed['chunk'] as String? ?? parsed['answer'] as String? ?? '';
-            if (delta.isNotEmpty) {
-              buffer.write(delta);
-              onChunk?.call(delta);
-            }
-          } catch (_) {
-            // malformed chunk — skip
-          }
+    // The server sends `chunk` events, each with one piece of the answer as
+    // {"delta": ...}, then a `done` event with the whole answer as
+    // {"answer": ...}. Lines are split across the whole stream, so a piece cut
+    // in two by the network is still read.
+    final pieces = StringBuffer();
+    String? wholeAnswer;
+    final lines = streamedResponse.stream
+        .transform(utf8.decoder)
+        .transform(const LineSplitter());
+    await for (final line in lines) {
+      if (!line.startsWith('data:')) continue;
+      final data = line.substring(5).trim();
+      if (data.isEmpty || data == '[DONE]') continue;
+      try {
+        final parsed = jsonDecode(data) as Map<String, dynamic>;
+        // `chunk` is the name an older server used for a piece.
+        final piece = parsed['delta'] ?? parsed['chunk'];
+        if (piece is String && piece.isNotEmpty) {
+          pieces.write(piece);
+          onChunk?.call(piece);
+        } else if (parsed['answer'] is String) {
+          wholeAnswer = parsed['answer'] as String;
         }
+      } catch (_) {
+        // malformed line — skip
       }
     }
 
-    return QnaWithAiResponse(answer: buffer.toString());
+    // A reply with no pieces at all still reaches onChunk, as one piece.
+    if (pieces.isEmpty && (wholeAnswer?.isNotEmpty ?? false)) {
+      onChunk?.call(wholeAnswer!);
+    }
+    return QnaWithAiResponse(answer: wholeAnswer ?? pieces.toString());
   }
 
   // ============================================================================
@@ -1361,11 +1406,14 @@ class Encatch {
     String eventName,
     String? formConfigurationId,
   ) async {
-    if (_backgroundPaused) return;
+    if (_skippedWhilePaused('track-event')) return;
     // Survey events are sent for identified users only: the server answers a
     // visitor's with 403. That covers the time before a new user's first
     // identify reply, when requests still go out as a visitor.
-    if (_userName == null || _userId == null) return;
+    if (_userName == null || _userId == null) {
+      _reportSkipped('track-event', 'visitor');
+      return;
+    }
     try {
       final deviceInfo = await _buildDeviceInfo();
       final req = TrackEventRequest(
@@ -1466,6 +1514,63 @@ class Encatch {
   static bool get _backgroundPaused =>
       rate.isPaused(rate.Bucket.tracking) || _signatureExpired;
 
+  /// Reports a tracking call that is not sent because background traffic is
+  /// paused, and says whether it was.
+  static bool _skippedWhilePaused(String endpoint) {
+    if (!_backgroundPaused) return false;
+    _reportSkipped(
+      endpoint,
+      rate.isPaused(rate.Bucket.tracking)
+          ? 'rate-limited'
+          : 'signature-expired',
+    );
+    return true;
+  }
+
+  // ============================================================================
+  // Internal: debug hooks (EncatchConfig.onRequest / onResponse)
+  // ============================================================================
+
+  /// Calls a hook so that nothing it does can break the SDK: a throw is
+  /// ignored, and so is a failed future from an async hook.
+  static void _callHook(dynamic Function() call) {
+    try {
+      final result = call();
+      if (result is Future) result.catchError((_) {});
+    } catch (_) {
+      // ignored
+    }
+  }
+
+  static void _reportRequest(String endpoint, int attempt) {
+    final hook = _onRequest;
+    if (hook == null) return;
+    _callHook(
+      () => (hook as dynamic)(
+        EncatchRequestInfo(endpoint: endpoint, attempt: attempt),
+      ),
+    );
+  }
+
+  static void _reportResponse(EncatchResponseInfo info) {
+    final hook = _onResponse;
+    if (hook == null) return;
+    _callHook(() => (hook as dynamic)(info));
+  }
+
+  /// A call the SDK decided not to send.
+  static void _reportSkipped(String endpoint, String reason) {
+    _reportResponse(
+      EncatchResponseInfo(
+        endpoint: endpoint,
+        attempt: 1,
+        outcome: 'skipped',
+        rateLimited: reason == 'rate-limited',
+        reason: reason,
+      ),
+    );
+  }
+
   /// When a tracking pause ends: send the identify held during it, then the
   /// calls that were already in the queue.
   static void _onPauseEnd(rate.Bucket bucket) {
@@ -1531,6 +1636,8 @@ class Encatch {
     _appPackageName = null;
     _eventCallbacks.clear();
     _onBeforeShowForm = null;
+    _onRequest = null;
+    _onResponse = null;
     _pendingResponses.clear();
     _logger = const EncatchLogger(debugMode: false);
     internals.sdkLogger = _logger;
@@ -1561,7 +1668,7 @@ class Encatch {
       deviceVersion: osVersion,
       deviceOsVersion: osVersion,
       deviceType: getDeviceTypeEnv(),
-      sdkVersion: _sdkVersion,
+      sdkVersion: sdkVersion,
       appVersion: _appVersion,
       app: _appPackageName,
       deviceLanguage: deviceLocale,
@@ -1644,8 +1751,12 @@ class Encatch {
     String? signatureTime,
     String? identifyAs,
     String? identifySignature,
+    int? attempt,
   }) async {
     final url = Uri.parse('$_apiBaseUrl/$endpoint');
+    final endpointName = endpoint.split('/').last;
+    final attemptNo =
+        attempt ?? (Zone.current[internals.attemptZoneKey] as int? ?? 1);
 
     final headers = _buildHeaders(
       signatureTime: signatureTime,
@@ -1653,6 +1764,7 @@ class Encatch {
       identifySignature: identifySignature,
     );
 
+    _reportRequest(endpointName, attemptNo);
     final stopwatch = Stopwatch()..start();
     Object? requestError;
     http.Response? response;
@@ -1679,6 +1791,20 @@ class Encatch {
       responseHeaders: response?.headers,
       responseBody: response?.body,
       error: requestError,
+    );
+
+    final status = response?.statusCode;
+    _reportResponse(
+      EncatchResponseInfo(
+        endpoint: endpointName,
+        attempt: attemptNo,
+        status: status,
+        durationMs: stopwatch.elapsedMilliseconds,
+        outcome: status == null
+            ? 'network-error'
+            : (status >= 200 && status < 300 ? 'ok' : 'error'),
+        rateLimited: status == 429,
+      ),
     );
 
     if (requestError != null) throw requestError;

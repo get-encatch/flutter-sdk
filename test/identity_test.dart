@@ -213,4 +213,25 @@ void main() {
     expect(event.userName, 'alice');
     expect(event.userId, api.expectedUserId('alice'));
   });
+  testFake(
+    'calls made right after identifyUser go out after it, as that user',
+    (async, api) {
+      api.scenario.latency = const Duration(milliseconds: 100);
+      Encatch.identifyUser('alice');
+      Encatch.trackEvent('tap');
+      Encatch.trackScreen('/home');
+      async.elapse(const Duration(seconds: 3));
+
+      expect(api.requests.map((r) => r.endpoint), [
+        'identify-user',
+        'track-event',
+        'track-screen',
+      ]);
+      for (final r in api.requests.skip(1)) {
+        expect(r.status, 200);
+        expect(r.userName, 'alice');
+        expect(r.userId, api.expectedUserId('alice'));
+      }
+    },
+  );
 }

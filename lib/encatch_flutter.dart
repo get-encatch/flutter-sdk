@@ -21,6 +21,8 @@ export 'src/form_helpers.dart'
 export 'src/types.dart'
     show
         EncatchConfig,
+        EncatchRequestInfo,
+        EncatchResponseInfo,
         EncatchTheme,
         UserTraits,
         IdentifyOptions,

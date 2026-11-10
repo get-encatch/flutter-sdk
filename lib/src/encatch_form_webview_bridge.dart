@@ -28,7 +28,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'encatch.dart';
 import 'form_session.dart';
 import 'form_webview_helpers.dart';
-import 'logger.dart';
+import 'internals.dart' as internals;
 import 'pending_completion_cta.dart';
 import 'types.dart';
 
@@ -88,8 +88,6 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
   // Instance key: incremented per new payload load to bust the WebView cache.
   int _instanceKey = 0;
 
-  static final _logger = const EncatchLogger(debugMode: false);
-
   // ============================================================================
   // Public accessors (used by parent widgets for skeleton visibility etc.)
   // ============================================================================
@@ -146,8 +144,9 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
 
     final payload = widget.payload;
     final config = payload.formConfig;
-    // ignore: avoid_print
-    print('[${widget.logTag}] form ready received: $formId');
+    internals.sdkLogger.debug(
+      '[${widget.logTag}] form ready received: $formId',
+    );
 
     _injectSdkMessage(SdkMessageType.formConfig, {
       ...config.toJson(),
@@ -243,8 +242,7 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
 
       case FormMessageType.formResize:
         final h = data['height'];
-        // ignore: avoid_print
-        print('[${widget.logTag}] form resize: $h');
+        internals.sdkLogger.debug('[${widget.logTag}] form resize: $h');
         if (h is num && h > 0) widget.onHeightChange(h.toDouble());
 
       case FormMessageType.formCloseButton:
@@ -334,8 +332,9 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
         }
 
       case FormMessageType.formError:
-        // ignore: avoid_print
-        print('[${widget.logTag}] form:error received: $data');
+        internals.sdkLogger.debug(
+          '[${widget.logTag}] form:error received: $data',
+        );
         _session.error(formId, data);
 
       case FormMessageType.formLayout:
@@ -462,8 +461,7 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
                 ? LaunchMode.inAppBrowserView
                 : LaunchMode.externalApplication;
             launchUrl(uri, mode: mode).catchError((Object e) {
-              // ignore: avoid_print
-              print(
+              internals.sdkLogger.debug(
                 '[${widget.logTag}] ctaTriggered: failed to open URL ($action): $e',
               );
               return false;
@@ -502,8 +500,7 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
         disallowOverScroll: true,
       ),
       onLoadStart: (controller, loadUrl) {
-        // ignore: avoid_print
-        print('[${widget.logTag}] Load start: $loadUrl');
+        internals.sdkLogger.debug('[${widget.logTag}] Load start: $loadUrl');
       },
       shouldOverrideUrlLoading: (controller, navigationAction) async {
         final uri = navigationAction.request.url;
@@ -522,8 +519,9 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
           try {
             await launchUrl(uri, mode: LaunchMode.externalApplication);
           } catch (e) {
-            // ignore: avoid_print
-            print('[${widget.logTag}] Failed to open external URL: $e');
+            internals.sdkLogger.debug(
+              '[${widget.logTag}] Failed to open external URL: $e',
+            );
           }
           return NavigationActionPolicy.CANCEL;
         }
@@ -555,24 +553,25 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
               final msg = jsonDecode(raw) as Map<String, dynamic>;
               _handleWebViewMessage(msg);
             } catch (e) {
-              // ignore: avoid_print
-              print('[${widget.logTag}] Failed to parse message: $e');
+              internals.sdkLogger.debug(
+                '[${widget.logTag}] Failed to parse message: $e',
+              );
             }
           },
         );
       },
       onPermissionRequest: (controller, request) async {
-        // ignore: avoid_print
-        print('[${widget.logTag}] permission request: ${request.resources}');
+        internals.sdkLogger.debug(
+          '[${widget.logTag}] permission request: ${request.resources}',
+        );
         return PermissionResponse(
           resources: request.resources,
           action: PermissionResponseAction.GRANT,
         );
       },
       onLoadStop: (controller, loadUrl) {
-        // ignore: avoid_print
-        print('[${widget.logTag}] Load stop: $loadUrl');
-        _logger.debug('WebView loaded: $loadUrl');
+        internals.sdkLogger.debug('[${widget.logTag}] Load stop: $loadUrl');
+        internals.sdkLogger.debug('WebView loaded: $loadUrl');
         controller
             .evaluateJavascript(
               source: '''
@@ -587,27 +586,27 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
         });
       },
       onReceivedHttpError: (controller, request, errorResponse) {
-        // ignore: avoid_print
-        print(
+        internals.sdkLogger.debug(
           '[${widget.logTag}] HTTP error: '
           '${errorResponse.statusCode} ${errorResponse.reasonPhrase} '
           '${request.url}',
         );
       },
       onConsoleMessage: (controller, consoleMessage) {
-        // ignore: avoid_print
-        print(
+        internals.sdkLogger.debug(
           '[${widget.logTag}][console] '
           '${consoleMessage.messageLevel}: ${consoleMessage.message}',
         );
       },
       onWebContentProcessDidTerminate: (controller) {
-        // ignore: avoid_print
-        print('[${widget.logTag}] Web content process terminated');
+        internals.sdkLogger.debug(
+          '[${widget.logTag}] Web content process terminated',
+        );
       },
       onReceivedError: (controller, request, error) {
-        // ignore: avoid_print
-        print('[${widget.logTag}] Load error: ${error.description}');
+        internals.sdkLogger.debug(
+          '[${widget.logTag}] Load error: ${error.description}',
+        );
         if (request.isForMainFrame == false) return;
         final scheme = request.url.scheme.toLowerCase();
         if (scheme != 'https' && scheme != 'http') return;

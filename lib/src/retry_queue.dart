@@ -220,7 +220,12 @@ Future<void> _run() async {
     if (item == null) break;
 
     try {
-      await item.fn();
+      // The request layer reads the attempt number from the zone, for the
+      // debug hooks.
+      await runZoned(
+        item.fn,
+        zoneValues: {internals.attemptZoneKey: item.retries + 1},
+      );
       await _drop(item);
     } catch (err) {
       if (_isClientError(err)) {

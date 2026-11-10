@@ -67,6 +67,8 @@ Future<void> startSdk(
   bool isFullScreen = false,
   bool debugMode = false,
   Future<bool> Function(ShowFormInterceptorPayload payload)? onBeforeShowForm,
+  void Function(EncatchRequestInfo info)? onRequest,
+  void Function(EncatchResponseInfo info)? onResponse,
 }) async {
   await prepareSdk(api, stored: stored, keepStorage: keepStorage);
   await Encatch.init(
@@ -76,6 +78,8 @@ Future<void> startSdk(
       isFullScreen: isFullScreen,
       debugMode: debugMode,
       onBeforeShowForm: onBeforeShowForm,
+      onRequest: onRequest,
+      onResponse: onResponse,
     ),
   );
 }

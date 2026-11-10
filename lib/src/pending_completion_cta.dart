@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'encatch.dart';
+import 'internals.dart' as internals;
 import 'types.dart';
 
 /// Wire-format payload forwarded from the form engine via form:complete.
@@ -108,8 +109,7 @@ class PendingCompletionCtaScheduler {
             ? LaunchMode.inAppBrowserView
             : LaunchMode.externalApplication;
         launchUrl(uri, mode: mode).catchError((Object e) {
-          // ignore: avoid_print
-          print(
+          internals.sdkLogger.debug(
             '[Encatch] pendingCompletionCta: failed to open URL ($action): $e',
           );
           return false;

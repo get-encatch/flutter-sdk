@@ -16,6 +16,10 @@ http.Client sdkHttpClient = http.Client();
 /// SDK follows fake time; production code never reassigns it.
 int Function() nowMs = () => DateTime.now().millisecondsSinceEpoch;
 
+/// Zone key under which the retry queue passes the attempt number (1, 2, 3)
+/// to the request layer.
+const attemptZoneKey = #encatchAttempt;
+
 /// How long a request may take before it counts as a network failure.
 const requestTimeout = Duration(seconds: 30);
 

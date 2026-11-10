@@ -1,7 +1,5 @@
-// Step 12b (Q&A with AI streaming). Fails on 1.1.2 until the fix lands.
-@Tags(['pending-fix'])
-library;
-
+// Step 12b (Q&A with AI streaming): the answer arrives piece by piece. This
+// failed on 1.1.2, which showed the whole answer at once.
 import 'package:encatch_flutter/encatch_flutter.dart';
 import 'package:flutter_test/flutter_test.dart';
 

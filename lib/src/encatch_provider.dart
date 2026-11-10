@@ -119,6 +119,15 @@ class EncatchNavigatorObserver extends NavigatorObserver {
   /// does not track the screen underneath a second time.
   String? _lastTracked;
 
+  /// Whether to track the `/` route, the name Flutter gives an app's `home`.
+  ///
+  /// Off by default, so the root route is not tracked, as in earlier versions.
+  /// Turn it on to track the home screen like any other named route, for
+  /// example to show a survey on it.
+  final bool trackRootRoute;
+
+  EncatchNavigatorObserver({this.trackRootRoute = false});
+
   @override
   void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
     _trackRoute(route);
@@ -136,7 +145,7 @@ class EncatchNavigatorObserver extends NavigatorObserver {
 
   void _trackRoute(Route<dynamic> route) {
     final name = route.settings.name;
-    if (name != null && name.isNotEmpty && name != '/') {
+    if (name != null && name.isNotEmpty && (trackRootRoute || name != '/')) {
       if (name == _lastTracked) return;
       _lastTracked = name;
       final track = internals.autoTrackScreen;

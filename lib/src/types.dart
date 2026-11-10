@@ -440,6 +440,20 @@ class EncatchConfig {
   final Future<bool> Function(ShowFormInterceptorPayload payload)?
   onBeforeShowForm;
 
+  /// Optional debug hook, called just before the SDK sends a request.
+  ///
+  /// For diagnostics only. It never receives the API key, headers, the secure
+  /// signature or request bodies. An error thrown by the hook is ignored.
+  /// File uploads and the Q&A stream are not reported.
+  final void Function(EncatchRequestInfo info)? onRequest;
+
+  /// Optional debug hook, called when a request finishes, and for calls the
+  /// SDK decided not to send (see [EncatchResponseInfo.outcome]).
+  ///
+  /// For diagnostics only. It never receives the API key, headers, the secure
+  /// signature or response bodies. An error thrown by the hook is ignored.
+  final void Function(EncatchResponseInfo info)? onResponse;
+
   const EncatchConfig({
     this.apiBaseUrl,
     this.webHost,
@@ -448,6 +462,64 @@ class EncatchConfig {
     this.debugMode,
     this.appVersion,
     this.onBeforeShowForm,
+    this.onRequest,
+    this.onResponse,
+  });
+}
+
+/// What [EncatchConfig.onRequest] receives: a request the SDK is about to send.
+class EncatchRequestInfo {
+  /// The API endpoint, for example `track-event` or `identify-user`.
+  final String endpoint;
+
+  /// 1 for the first attempt, 2 and 3 for retries.
+  final int attempt;
+
+  const EncatchRequestInfo({required this.endpoint, required this.attempt});
+}
+
+/// What [EncatchConfig.onResponse] receives: how a request ended, or why a
+/// call was not sent.
+class EncatchResponseInfo {
+  /// The API endpoint, for example `track-event` or `identify-user`.
+  final String endpoint;
+
+  /// 1 for the first attempt, 2 and 3 for retries.
+  final int attempt;
+
+  /// The HTTP status. Null when no reply arrived or the call was not sent.
+  final int? status;
+
+  /// How long the request took, in milliseconds. 0 for a call not sent.
+  final int durationMs;
+
+  /// One of:
+  /// - `ok`: a 2xx reply
+  /// - `error`: any other reply
+  /// - `network-error`: no reply (offline, timeout)
+  /// - `skipped`: the SDK did not send the call; see [reason]
+  final String outcome;
+
+  /// True for a 429 reply, and for a call skipped during a rate-limit pause.
+  final bool rateLimited;
+
+  /// Why a `skipped` call was not sent. Null otherwise. One of:
+  /// - `rate-limited`: during the pause after a 429
+  /// - `collapsed`: the same event or screen was tracked within the last second
+  /// - `duplicate`: an identify identical to the last one
+  /// - `signature-expired`: the secure signature expired; identify again
+  /// - `visitor`: a survey event for a user who is not identified
+  /// - `survey-open`: a survey is already loading, open or waiting to show
+  final String? reason;
+
+  const EncatchResponseInfo({
+    required this.endpoint,
+    required this.attempt,
+    required this.outcome,
+    this.status,
+    this.durationMs = 0,
+    this.rateLimited = false,
+    this.reason,
   });
 }
 
