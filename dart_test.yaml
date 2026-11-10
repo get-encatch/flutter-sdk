@@ -1,0 +1,9 @@
+# Tests tagged `pending-fix` describe behaviour the SDK does not have yet. Each
+# one fails on the current code on purpose and is skipped by default, so the
+# normal test run stays green. A fix removes the tag from the tests it makes
+# pass. To see them fail:
+#
+#   flutter test --run-skipped --tags pending-fix
+tags:
+  pending-fix:
+    skip: "Describes a fix that has not landed yet. Run with --run-skipped --tags pending-fix."
