@@ -389,10 +389,16 @@ class Encatch {
     queue.enqueue(
       'identifyUser',
       () async {
+        // IdentifyUserResponse is a public type and stays as it is; the
+        // survey fields are read from the reply itself.
+        var raw = const <String, dynamic>{};
         final res = await _post<IdentifyUserResponse>(
           _endpoints['identifyUser']!,
           req.toJson(),
-          IdentifyUserResponse.fromJson,
+          (json) {
+            raw = json;
+            return IdentifyUserResponse.fromJson(json);
+          },
           signatureTime: options?.secure?.generatedDateTimeinUTC,
           identifyAs: userName,
         );
@@ -411,12 +417,11 @@ class Encatch {
           pingAgainIn: res.pingAgainIn,
           feedbackTransactions: res.feedbackTransactions,
         );
-        if (res.formConfigurationId != null) {
-          await _showFormInternal(
-            res.formConfigurationId!,
-            triggerType: TriggerType.automatic,
-          );
-        }
+        await _handleSurveyInReply(
+          nextFeedbackId: raw['nextFeedbackId'] as String?,
+          onPageDelay: (raw['onPageDelay'] as num?)?.toInt(),
+          formConfigurationId: res.formConfigurationId,
+        );
         await startSession(
           options: const StartSessionOptions(
             skipImmediatePing: true,
@@ -517,12 +522,11 @@ class Encatch {
         pingAgainIn: res.pingAgainIn,
         feedbackTransactions: res.feedbackTransactions,
       );
-      if (res.formConfigurationId != null) {
-        await _showFormInternal(
-          res.formConfigurationId!,
-          triggerType: TriggerType.automatic,
-        );
-      }
+      await _handleSurveyInReply(
+        nextFeedbackId: res.nextFeedbackId,
+        onPageDelay: res.onPageDelay,
+        formConfigurationId: res.formConfigurationId,
+      );
     });
 
     queue.flush().catchError((_) {});
@@ -976,12 +980,11 @@ class Encatch {
         _startPingInterval();
       }
 
-      if (res.formConfigurationId != null) {
-        await _showFormInternal(
-          res.formConfigurationId!,
-          triggerType: TriggerType.automatic,
-        );
-      }
+      await _handleSurveyInReply(
+        nextFeedbackId: res.nextFeedbackId,
+        onPageDelay: res.onPageDelay,
+        formConfigurationId: res.formConfigurationId,
+      );
     } catch (_) {
       // Ignored: the next ping comes on the interval.
     }
@@ -1281,6 +1284,10 @@ class Encatch {
     String? formConfigurationId,
   ) async {
     if (rate.isPaused(rate.Bucket.tracking)) return;
+    // Survey events are sent for identified users only: the server answers a
+    // visitor's with 403. That covers the time before a new user's first
+    // identify reply, when requests still go out as a visitor.
+    if (_userName == null || _userId == null) return;
     try {
       final deviceInfo = await _buildDeviceInfo();
       final req = TrackEventRequest(
@@ -1289,10 +1296,16 @@ class Encatch {
         deviceInfo: deviceInfo,
         feedbackTransactions: _feedbackTransactions,
       );
-      await _post<TrackEventResponse>(
+      final res = await _post<TrackEventResponse>(
         _endpoints['trackEvent']!,
         req.toJson(),
         TrackEventResponse.fromJson,
+      );
+      // Ignored while this survey is open; the guard sees to that.
+      await _handleSurveyInReply(
+        nextFeedbackId: res.nextFeedbackId,
+        onPageDelay: res.onPageDelay,
+        formConfigurationId: res.formConfigurationId,
       );
     } catch (_) {
       // fire-and-forget

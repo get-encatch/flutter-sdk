@@ -890,6 +890,11 @@ class TrackEventRequest {
 class TrackEventResponse {
   final String message;
   final String? formConfigurationId;
+
+  /// The survey the server chose, if any, and how many seconds to wait
+  /// before showing it.
+  final String? nextFeedbackId;
+  final int? onPageDelay;
   final int? pingAgainIn;
   final bool? pingOnNextPageVisit;
   final String? feedbackTransactions;
@@ -897,6 +902,8 @@ class TrackEventResponse {
   const TrackEventResponse({
     required this.message,
     this.formConfigurationId,
+    this.nextFeedbackId,
+    this.onPageDelay,
     this.pingAgainIn,
     this.pingOnNextPageVisit,
     this.feedbackTransactions,
@@ -906,6 +913,8 @@ class TrackEventResponse {
     return TrackEventResponse(
       message: json['message'] as String? ?? '',
       formConfigurationId: json['formConfigurationId'] as String?,
+      nextFeedbackId: json['nextFeedbackId'] as String?,
+      onPageDelay: (json['onPageDelay'] as num?)?.toInt(),
       pingAgainIn: json['pingAgainIn'] as int?,
       pingOnNextPageVisit: json['pingOnNextPageVisit'] as bool?,
       feedbackTransactions: json[r'$feedbackTransactions'] as String?,
@@ -1165,6 +1174,11 @@ class PingResponse {
   final String message;
   final String? action;
   final String? formConfigurationId;
+
+  /// The survey the server chose, if any, and how many seconds to wait
+  /// before showing it.
+  final String? nextFeedbackId;
+  final int? onPageDelay;
   final int? pingAgainIn;
   final bool? pingOnNextPageVisit;
   final String? feedbackTransactions;
@@ -1173,6 +1187,8 @@ class PingResponse {
     required this.message,
     this.action,
     this.formConfigurationId,
+    this.nextFeedbackId,
+    this.onPageDelay,
     this.pingAgainIn,
     this.pingOnNextPageVisit,
     this.feedbackTransactions,
@@ -1183,6 +1199,8 @@ class PingResponse {
       message: json['message'] as String? ?? '',
       action: json['action'] as String?,
       formConfigurationId: json['formConfigurationId'] as String?,
+      nextFeedbackId: json['nextFeedbackId'] as String?,
+      onPageDelay: (json['onPageDelay'] as num?)?.toInt(),
       pingAgainIn: json['pingAgainIn'] as int?,
       pingOnNextPageVisit: json['pingOnNextPageVisit'] as bool?,
       feedbackTransactions: json[r'$feedbackTransactions'] as String?,

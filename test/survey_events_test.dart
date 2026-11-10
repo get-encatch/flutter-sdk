@@ -1,8 +1,5 @@
-// Steps 7 and 8 (visitor survey events; surveys chosen in every reply).
-// Fails on 1.1.2 until the fixes land.
-@Tags(['pending-fix'])
-library;
-
+// Steps 7 and 8: visitors send no survey events, and a survey the server
+// chooses in any reply is shown. These failed on 1.1.2.
 import 'package:encatch_flutter/encatch_flutter.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -37,6 +34,46 @@ void main() {
       Encatch.trackFormEvent('form:show', defaultFormId);
       async.elapse(const Duration(seconds: 2));
       expect(eventsOf(api), isEmpty);
+    });
+  });
+
+  group('step 7: identified users', () {
+    testFake('every survey event is sent, "remind me later" included', (
+      async,
+      api,
+    ) {
+      identify(async, 'alice');
+      api.clearRequests();
+      for (final name in _surveyEvents) {
+        Encatch.trackFormEvent(name, defaultFormId);
+      }
+      async.elapse(const Duration(seconds: 2));
+      expect(eventsOf(api), _surveyEvents);
+      for (final r in api.of('track-event')) {
+        expect(r.status, 200);
+        expect(r.userName, 'alice');
+        expect(r.userId, api.expectedUserId('alice'));
+      }
+    });
+
+    testFake("a survey chosen in a survey event's reply waits its turn", (
+      async,
+      api,
+    ) {
+      final presenter = FakePresenter();
+      identify(async, 'alice');
+      Encatch.showForm(defaultFormId);
+      async.flushMicrotasks();
+      expect(presenter.shown, hasLength(1));
+
+      // The reply to this survey's own form:show picks another survey.
+      api.scenario.eventTriggers = {
+        'form:show': const SurveyTrigger(secondFormId),
+      };
+      Encatch.trackFormEvent('form:show', defaultFormId);
+      async.elapse(const Duration(seconds: 2));
+      expect(api.count('show-form'), 1, reason: 'a survey is open');
+      presenter.dispose();
     });
   });
 
