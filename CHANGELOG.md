@@ -1,3 +1,48 @@
+## 1.2.0
+
+This release changes how much the SDK sends, how it identifies users and when it shows surveys. No existing method, parameter or type has changed; everything new is optional.
+
+**New, all optional**
+- `EncatchConfig.onRequest` and `onResponse`: debug hooks that report each request, and each call the SDK decides not to send, with the reason. They never carry the API key, headers, the secure signature or bodies.
+- `EncatchNavigatorObserver(trackRootRoute: true)`: track the `/` route. Off by default; planned to become the default in a later minor release.
+
+**Behaviour changes to be aware of**
+- Closing a survey with its X before the final submit is now a dismissal. For an identified user the SDK records it and `Encatch.on` listeners receive `EventType.formDismissed`. Visitors send nothing.
+- Survey events reach `Encatch.on` with the form's id. They used to carry an empty id.
+- `stopSession()` now survives an app restart, as documented. An app that relied on the next launch resuming by itself must call `startSession()` or identify a user.
+- Identical calls are sent once: an `identifyUser` identical to the last one, and the same event or screen tracked again within one second.
+- `EncatchNavigatorObserver` tracks a route only when its name changes, so closing a dialog no longer tracks the screen underneath again.
+- Visitors no longer send survey events (the server rejected them).
+- The SDK no longer prints to the console. Its messages go through its logger and appear only with `debugMode: true`.
+
+**Fixes: request load**
+- A call made while another was in flight stayed in the queue until the next SDK call or app resume. It is now sent straight away.
+- A request that never answered blocked the queue for the life of the app. Requests now time out after 30 seconds.
+- After a 429 the SDK pauses for the time in `Retry-After` instead of sending more. A survey submit is never dropped for a 429: it waits and is retried.
+- A screen that carried a survey, tracked many times, sent a show-form request each time. One survey is shown at a time, and a repeated `showForm` for the open survey no longer discards the answers in progress.
+
+**Fixes: surveys**
+- Surveys with immediate, delayed and tracked-event triggers were never shown. They are now.
+- A survey's own "remind me later" is sent for identified users only.
+- Q&A with AI answers now arrive piece by piece instead of all at once.
+
+**Fixes: identity**
+- A new user whose first identify failed sent a user name without an id and got 401 on every request. Requests now carry both identity headers or neither.
+- Switching users no longer sends the new name with the previous user's id.
+- `resetUser()` followed straight away by `identifyUser()`, neither awaited, now ends as that user.
+- An event or screen tracked right after `identifyUser()`, not awaited, is sent after it as that user.
+- The server's "user could not be created" reply now resets the user, as intended.
+
+**Fixes: secure mode**
+- Identify sends the signature in the headers the gateway reads, including the session time. Keys with a session time rejected every signed identify before.
+- After a successful secure identify the signature is sent with every request for that user and kept across restarts.
+- When a signature expires the SDK stops tracking until the app identifies again, instead of sending requests that all fail.
+- The debug log masks the signature.
+
+**Fixes: session**
+- A reply from the server no longer restarts the ping after `stopSession()` or `pauseSession()`.
+- The first screen, tracked before `init` finished, is no longer lost.
+
 ## 1.1.2
 - Align submit-contract types with `@encatch/schema` 1.5.2: add `QuestionResponse.error`, `timeSpentMs`, `isPathTraversed`, explicit null answers, and `FormDetailsResponse`.
 - Change `PaymentsUpiAnswer.amount` to a decimal string (schema wire format) with `PaymentsUpiAnswer.fromNumericAmount` helper.

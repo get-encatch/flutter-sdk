@@ -36,6 +36,15 @@ Add internet permission to `android/app/src/main/AndroidManifest.xml`:
 
 No additional setup required. The SDK uses `flutter_inappwebview` which works out of the box.
 
+### Camera and microphone
+
+The SDK never asks for camera or microphone access by itself. The prompt appears only when a form question needs it, such as a video or audio answer.
+
+Declare the permissions only if your forms use those question types:
+
+- **Android:** `CAMERA` and `RECORD_AUDIO` in `AndroidManifest.xml`.
+- **iOS:** `NSCameraUsageDescription` and `NSMicrophoneUsageDescription` in `Info.plist`.
+
 ## Usage
 
 For detailed usage, see the [Flutter SDK reference](https://encatch.com/docs/sdk-reference/mobile-sdk/flutter).
@@ -66,11 +75,42 @@ await Encatch.identifyUser(
 );
 ```
 
+Call `identifyUser` once, after sign-in. Calling it again with the same user, traits, locale, country and signature sends nothing.
+
+Tracking calls made straight after `identifyUser`, without awaiting it, are queued behind it and sent as that user. For a user the device hasn't seen before, anything else sent before the identify reply arrives (a ping, say) goes out as a visitor.
+
+#### Secure mode
+
+For an API key that has a secret, your backend signs the user name and the app passes the signature along:
+
+```dart
+await Encatch.identifyUser(
+  'user@example.com',
+  options: IdentifyOptions(
+    secure: SecureOptions(
+      signature: signatureFromYourBackend,
+      // Only for keys with a session time:
+      generatedDateTimeinUTC: timeFromYourBackend,
+    ),
+  ),
+);
+```
+
+- **Signature:** hex HMAC-SHA256, computed with the key's secret, of the user name. For a key with a session time, of the user name followed by the time.
+- **Time:** epoch milliseconds, as a string. Pass exactly the value your backend signed.
+- **Never put the secret in the app.** Sign on your server.
+- After a successful identify the SDK sends the signature with every request for that user, and keeps it across app restarts.
+- **Keys with a session time:** identify with a fresh signature on every app launch. When a signature expires the SDK logs one warning and stops tracking until the app identifies again; a survey being submitted at that moment is sent after that identify.
+
 ### 3. Track events
 
 ```dart
 await Encatch.trackEvent('button_clicked');
 ```
+
+Call `trackEvent` from handlers, not from `build`. As a safety net, the same event name tracked again within one second is sent once.
+
+If the server answers 429 (rate limited), the SDK pauses tracking for the time the server asks, and skips tracking calls made during the pause. A survey submit is never dropped: it waits and is retried.
 
 ### 4. Track screens
 
@@ -86,6 +126,16 @@ MaterialApp(
   // ...
 )
 ```
+
+The observer tracks named routes, and only when the route name changes, so closing a dialog doesn't track the screen underneath again.
+
+The root route, `/`, is not tracked by default. To track it, for example to show a survey on your home screen:
+
+```dart
+navigatorObservers: [EncatchNavigatorObserver(trackRootRoute: true)],
+```
+
+The default is planned to change to `true` in a later minor release.
 
 ### 5. Show a form manually
 
@@ -104,12 +154,33 @@ final unsubscribe = Encatch.on((eventType, payload) {
 unsubscribe();
 ```
 
+When an identified user closes a survey with its X before the final submit, the SDK records a dismissal and your listener receives `EventType.formDismissed`. Closing on the thank-you screen, "remind me later" and call-to-action buttons are not dismissals.
+
 ### 7. Pre-fill responses
 
 ```dart
 Encatch.addToResponse('question_id', 'pre-filled value');
 await Encatch.showForm('your-form-slug');
 ```
+
+### 8. Stop and start the session
+
+```dart
+await Encatch.stopSession();   // for example, when the user opts out
+await Encatch.startSession();  // turn it back on
+```
+
+`stopSession()`:
+
+- stops the background ping and `EncatchNavigatorObserver`'s automatic screen tracking
+- closes the open survey and cancels one that is waiting to show
+- is saved, so it survives app restarts
+
+While stopped, calls your app makes itself still go out (`trackScreen`, `trackEvent`, `identifyUser`, `showForm` and submits), and a survey the server chooses in their replies is still shown.
+
+`startSession()` or a successful `identifyUser()` turns it back on. `resetUser()` clears a saved stop.
+
+`pauseSession()` and `resumeSession()` stop and restart the ping only, and are not saved.
 
 ## Configuration
 
@@ -126,6 +197,25 @@ EncatchProvider(
   child: MyApp(),
 )
 ```
+
+### Debug hooks
+
+Two optional hooks let you see what the SDK sends, for diagnostics:
+
+```dart
+EncatchConfig(
+  onRequest: (info) => debugPrint('-> ${info.endpoint} #${info.attempt}'),
+  onResponse: (info) => debugPrint(
+    '<- ${info.endpoint} ${info.outcome} ${info.status ?? info.reason}',
+  ),
+)
+```
+
+- `outcome` is `ok`, `error`, `network-error` or `skipped`.
+- For a `skipped` call, `reason` says why the SDK didn't send it: `rate-limited`, `collapsed`, `duplicate`, `signature-expired`, `visitor` or `survey-open`.
+- The hooks never receive your API key, headers, the secure signature or request and response bodies.
+- An error thrown inside a hook is ignored.
+- File uploads and the Q&A stream are not reported.
 
 ## Inline forms
 
