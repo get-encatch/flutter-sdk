@@ -77,6 +77,9 @@ def reports():
 
 def start(visitor=False):
     adb('shell', 'am', 'force-stop', APP)
+    # A fresh device id for every flow. Without this the server carries what an
+    # earlier flow did on this device (a tracked event, say) into the next one.
+    adb('shell', 'pm', 'clear', APP)
     collector('/__mock/reset', 'POST')
     adb('shell', 'am', 'start', '-n', f'{APP}/.MainActivity')
     time.sleep(5)
