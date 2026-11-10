@@ -99,7 +99,11 @@ def flow(name, visitor, steps, wait, close=True):
     before = reports()
     after_close = None
     if shown and close:
-        tap('text:Close', 4)
+        # The survey's controls take a moment to appear to adb; retry.
+        for _ in range(15):
+            if tap('text:Close', 4):
+                break
+            time.sleep(1)
         after_close = [r for r in reports() if r not in before]
     who = 'visitor' if visitor else 'identified'
     print(f'\n== {name} ({who})')
