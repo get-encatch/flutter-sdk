@@ -1,0 +1,21 @@
+name: fluttere2e
+description: "End-to-end test app for the Encatch Flutter SDK. Not published."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.1
+
+dependencies:
+  crypto: ^3.0.3
+  encatch_flutter:
+    path: ../../
+  flutter:
+    sdk: flutter
+  http: ^1.2.2
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

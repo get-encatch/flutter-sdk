@@ -9,6 +9,8 @@ analyzer:
     - windows/**
     - macos/**
     - linux/**
+    # The e2e app and mock API have their own tooling.
+    - e2e/**
 
 linter:
   rules:
