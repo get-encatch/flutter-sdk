@@ -167,6 +167,14 @@ class Encatch {
   static String? _lastTrackedScreen;
   static int _lastTrackedScreenAt = 0;
 
+  // Survey guard. The form whose show-form request is in flight; the form
+  // that is on screen (as asked for, and as the server named it); and the one
+  // delayed automatic show that may be waiting.
+  static String? _loadingFormId;
+  static String? _openFormRequestedId;
+  static String? _openFormConfigId;
+  static Timer? _pendingAutoShow;
+
   // A screen tracked before init finished; sent as soon as it has.
   static String? _screenBeforeInit;
 
@@ -537,27 +545,11 @@ class Encatch {
         pingAgainIn: res.pingAgainIn,
         feedbackTransactions: res.feedbackTransactions,
       );
-      if (res.formConfigurationId != null) {
-        await _showFormInternal(
-          res.formConfigurationId!,
-          triggerType: TriggerType.automatic,
-        );
-      } else if (res.nextFeedbackId != null) {
-        final delay = res.onPageDelay ?? 0;
-        if (delay > 0) {
-          Timer(Duration(seconds: delay), () {
-            _showFormInternal(
-              res.nextFeedbackId!,
-              triggerType: TriggerType.automatic,
-            ).catchError((_) {});
-          });
-        } else {
-          await _showFormInternal(
-            res.nextFeedbackId!,
-            triggerType: TriggerType.automatic,
-          );
-        }
-      }
+      await _handleSurveyInReply(
+        nextFeedbackId: res.nextFeedbackId,
+        onPageDelay: res.onPageDelay,
+        formConfigurationId: res.formConfigurationId,
+      );
     });
 
     queue.flush().catchError((_) {});
@@ -579,6 +571,46 @@ class Encatch {
     );
   }
 
+  /// True while a survey's show-form request is in flight or a survey is on
+  /// screen, modal or inline.
+  static bool get _surveyBusy => _loadingFormId != null || _isFormVisible;
+
+  static bool _isLoadingOrOpen(String formId) =>
+      _loadingFormId == formId ||
+      (_isFormVisible &&
+          (formId == _openFormRequestedId || formId == _openFormConfigId));
+
+  /// A survey the server chose in a reply: `nextFeedbackId` with `onPageDelay`
+  /// seconds to wait, or `formConfigurationId` from an older server. Ignored
+  /// while a survey is loading, open or already waiting to show.
+  static Future<void> _handleSurveyInReply({
+    String? nextFeedbackId,
+    int? onPageDelay,
+    String? formConfigurationId,
+  }) async {
+    final formId = formConfigurationId ?? nextFeedbackId;
+    if (formId == null) return;
+    if (_surveyBusy || _pendingAutoShow != null) return;
+
+    final delay = formConfigurationId != null ? 0 : (onPageDelay ?? 0);
+    if (delay <= 0) {
+      await _showFormInternal(formId, triggerType: TriggerType.automatic);
+      return;
+    }
+    _pendingAutoShow = Timer(Duration(seconds: delay), () {
+      _pendingAutoShow = null;
+      _showFormInternal(
+        formId,
+        triggerType: TriggerType.automatic,
+      ).catchError((_) {});
+    });
+  }
+
+  static void _cancelPendingAutoShow() {
+    _pendingAutoShow?.cancel();
+    _pendingAutoShow = null;
+  }
+
   static Future<void> _showFormInternal(
     String formId, {
     ShowFormOptions? options,
@@ -587,6 +619,37 @@ class Encatch {
     if (!_initialized) return;
     if (rate.isPaused(rate.Bucket.showForm)) return;
 
+    // An automatic survey never interrupts one that is loading or open. A
+    // manual show of the form that is already loading or open is ignored, so
+    // answers in progress are kept; a different form still replaces it.
+    if (triggerType == TriggerType.automatic) {
+      if (_surveyBusy) return;
+    } else if (_isLoadingOrOpen(formId)) {
+      return;
+    }
+
+    _loadingFormId = formId;
+    try {
+      await _loadAndPresentForm(
+        formId,
+        options: options,
+        triggerType: triggerType,
+      );
+    } finally {
+      // The presenters hear about a new form in microtasks queued when it is
+      // announced. This one runs after them, so "loading" lasts until a
+      // presenter has had the chance to mark the form visible.
+      scheduleMicrotask(() {
+        if (_loadingFormId == formId) _loadingFormId = null;
+      });
+    }
+  }
+
+  static Future<void> _loadAndPresentForm(
+    String formId, {
+    ShowFormOptions? options,
+    required TriggerType triggerType,
+  }) async {
     PendingCompletionCtaScheduler.cancel(formId);
 
     final resetMode = options?.reset ?? ResetMode.always;
@@ -621,7 +684,14 @@ class Encatch {
         ShowFormResponse.fromJson,
       );
     } catch (e) {
-      _logger.warn('showForm failed for $formId: $e');
+      // 404 means "not eligible now" and 429 has already logged its pause;
+      // neither is a problem for the host app to see.
+      final status = httpStatusOf(e);
+      if (status == 404 || status == 429) {
+        _logger.debug('showForm skipped for $formId: $e');
+      } else {
+        _logger.warn('showForm failed for $formId: $e');
+      }
       return;
     }
 
@@ -662,6 +732,8 @@ class Encatch {
 
     PendingCompletionCtaScheduler.cancel(res.feedbackConfigurationId);
 
+    _openFormRequestedId = formId;
+    _openFormConfigId = res.feedbackConfigurationId;
     _showFormController.add(
       ShowFormPayload(
         formId: res.feedbackConfigurationId,
@@ -1110,6 +1182,7 @@ class Encatch {
     _isFormVisible = false;
     _heldIdentify = null;
     _lastIdentifyKey = null;
+    _cancelPendingAutoShow();
     rate.clearPauses();
 
     await Future.wait([
@@ -1164,6 +1237,12 @@ class Encatch {
 
   static void setFormVisible(bool visible) {
     _isFormVisible = visible;
+    if (!visible) {
+      // Closed, completed, dismissed or its slot went away: the next survey
+      // may show.
+      _openFormRequestedId = null;
+      _openFormConfigId = null;
+    }
   }
 
   // ============================================================================
@@ -1277,6 +1356,10 @@ class Encatch {
     _lastTrackedScreen = null;
     _lastTrackedScreenAt = 0;
     _screenBeforeInit = null;
+    _cancelPendingAutoShow();
+    _loadingFormId = null;
+    _openFormRequestedId = null;
+    _openFormConfigId = null;
     await clearSession();
 
     _initialized = false;

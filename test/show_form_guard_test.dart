@@ -1,8 +1,6 @@
-// Step 4 (show-form guard). Fails on 1.1.2 until the fix lands.
-@Tags(['pending-fix'])
-library;
-
+// Step 4 (show-form guard): one survey at a time. These failed on 1.1.2.
 import 'package:encatch_flutter/encatch_flutter.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/harness.dart';
@@ -48,7 +46,6 @@ void main() {
 
     // Once the user closes it, the next automatic survey can show.
     presenter.close();
-    Encatch.trackScreen('/a');
     Encatch.trackScreen('/b');
     async.elapse(const Duration(seconds: 2));
     expect(api.count('show-form'), 2);
@@ -114,5 +111,63 @@ void main() {
     expect(api.count('show-form'), 1);
     expect(presenter.shown.single.formId, defaultFormId);
     presenter.dispose();
+  });
+  testFake('a 404 is not retried and leaves the next survey free to show', (
+    async,
+    api,
+  ) {
+    final presenter = FakePresenter();
+    identify(async, 'alice');
+    api.scenario.screenTriggers = {
+      '/a': const SurveyTrigger(defaultFormId),
+      '/b': const SurveyTrigger(secondFormId),
+    };
+    Encatch.trackScreen('/a');
+    async.elapse(const Duration(seconds: 2));
+    presenter.close();
+
+    // The server keeps choosing the form; the second automatic show gets 404
+    // ("not eligible now").
+    Encatch.trackScreen('/home');
+    Encatch.trackScreen('/a');
+    async.elapse(const Duration(minutes: 2));
+    expect(api.count('show-form'), 2);
+    expect(api.of('show-form').last.status, 404);
+    expect(presenter.shown, hasLength(1));
+
+    Encatch.trackScreen('/b');
+    async.elapse(const Duration(seconds: 2));
+    expect(api.count('show-form'), 3);
+    expect(presenter.shown.last.formId, secondFormId);
+    presenter.dispose();
+  });
+
+  test('an interceptor veto leaves the next survey free to show', () {
+    fakeAsync((async) {
+      final api = FakeApi();
+      final presenter = FakePresenter();
+      var allow = false;
+      startSdk(api, onBeforeShowForm: (_) async => allow);
+      async.flushMicrotasks();
+      identify(async, 'alice');
+      api.scenario.screenTriggers = {
+        '/a': const SurveyTrigger(defaultFormId),
+        '/b': const SurveyTrigger(secondFormId),
+      };
+      Encatch.trackScreen('/a');
+      async.elapse(const Duration(seconds: 2));
+      expect(api.count('show-form'), 1);
+      expect(presenter.shown, isEmpty, reason: 'vetoed');
+
+      allow = true;
+      Encatch.trackScreen('/b');
+      async.elapse(const Duration(seconds: 2));
+      expect(api.count('show-form'), 2);
+      expect(presenter.shown.single.formId, secondFormId);
+
+      presenter.dispose();
+      stopSdk();
+      async.flushMicrotasks();
+    });
   });
 }

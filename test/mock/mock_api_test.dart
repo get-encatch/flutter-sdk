@@ -196,11 +196,13 @@ void main() {
         },
       },
     });
+    // Eighteen visits inside the one-second window, each finishing before the
+    // next, as when an app re-tracks the screen on every rebuild.
     for (var i = 0; i < 18; i++) {
       await Encatch.trackScreen('/checkout');
-      await wait(150);
+      await wait(30);
     }
-    await wait(1500);
+    await wait(2000);
     final shows = await mock.requests('show-form');
     expect(await mock.requests('track-screen'), hasLength(1));
     expect(shows, hasLength(1));
