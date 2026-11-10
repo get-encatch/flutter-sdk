@@ -18,6 +18,7 @@ import 'http_error.dart';
 import 'internals.dart' as internals;
 import 'logger.dart';
 import 'pending_completion_cta.dart';
+import 'rate_limit.dart' as rate;
 import 'retry_queue.dart' as queue;
 import 'storage.dart';
 import 'types.dart';
@@ -27,6 +28,9 @@ import 'types.dart';
 // ============================================================================
 
 const _sdkVersion = '1.1.2';
+
+/// submit-form attempts in all when the API answers 429.
+const _submitAttemptsOn429 = 3;
 
 // ============================================================================
 // API Endpoint paths
@@ -152,6 +156,10 @@ class Encatch {
   // Interceptor
   static Future<bool> Function(ShowFormInterceptorPayload)? _onBeforeShowForm;
 
+  // The latest identifyUser call made during a 429 pause, sent when it ends.
+  static Future<void> Function()? _heldIdentify;
+  static void Function()? _removePauseListener;
+
   // Pending pre-fill responses
   static final Map<String, dynamic> _pendingResponses = {};
 
@@ -248,6 +256,7 @@ class Encatch {
 
     // Start retry queue lifecycle listener
     queue.startAppLifecycleListener();
+    _removePauseListener ??= rate.onPauseEnd(_onPauseEnd);
 
     // Flush any queued requests from a previous session
     queue.flush().catchError((_) {});
@@ -269,6 +278,14 @@ class Encatch {
     IdentifyOptions? options,
   }) async {
     if (!_initialized) return;
+
+    // During a 429 pause the call is held, not dropped, so a sign-in is not
+    // lost. Only the latest call is kept; it is sent when the pause ends.
+    if (rate.isPaused(rate.Bucket.tracking)) {
+      _heldIdentify = () =>
+          identifyUser(userName, traits: traits, options: options);
+      return;
+    }
 
     _userName = userName;
     await setUserName(userName);
@@ -369,6 +386,7 @@ class Encatch {
   /// Tracks a custom [eventName] and checks for matching form triggers.
   static Future<void> trackEvent(String eventName) async {
     if (!_initialized || _isFullScreen) return;
+    if (rate.isPaused(rate.Bucket.tracking)) return;
 
     final deviceInfo = await _buildDeviceInfo();
     final req = TrackEventRequest(
@@ -409,6 +427,7 @@ class Encatch {
     if (!_initialized || _isFullScreen) return;
 
     _currentScreen = screenName;
+    if (rate.isPaused(rate.Bucket.tracking)) return;
 
     final deviceInfo = await _buildDeviceInfo(screenName: screenName);
     final req = TrackScreenRequest(
@@ -480,6 +499,7 @@ class Encatch {
     TriggerType triggerType = TriggerType.manual,
   }) async {
     if (!_initialized) return;
+    if (rate.isPaused(rate.Bucket.showForm)) return;
 
     PendingCompletionCtaScheduler.cancel(formId);
 
@@ -627,11 +647,22 @@ class Encatch {
     body[r'$deviceInfo'] = deviceInfo.toJson();
     body[r'$feedbackTransactions'] = _feedbackTransactions;
 
-    final res = await _post<SubmitFormResponse>(
-      _endpoints['submitForm']!,
-      body,
-      SubmitFormResponse.fromJson,
-    );
+    // A submit carries the user's answers, so it is never dropped for a 429:
+    // it waits for the pause to end and is tried up to three times.
+    late final SubmitFormResponse res;
+    for (var attempt = 1; ; attempt++) {
+      await rate.waitUntilResumed(rate.Bucket.submitForm);
+      try {
+        res = await _post<SubmitFormResponse>(
+          _endpoints['submitForm']!,
+          body,
+          SubmitFormResponse.fromJson,
+        );
+        break;
+      } on EncatchHttpException catch (e) {
+        if (e.status != 429 || attempt >= _submitAttemptsOn429) rethrow;
+      }
+    }
 
     if (res.feedbackTransactions != null) {
       _feedbackTransactions = res.feedbackTransactions;
@@ -735,6 +766,7 @@ class Encatch {
 
   static Future<void> _doPing() async {
     if (!_initialized || _isFullScreen || _isFormVisible) return;
+    if (rate.isPaused(rate.Bucket.tracking)) return;
 
     try {
       final deviceInfo = await _buildDeviceInfo();
@@ -782,6 +814,7 @@ class Encatch {
   static Future<void> resetUser() async {
     final prevUserName = _userName;
     final prevUserId = _userId;
+    _heldIdentify = null;
 
     if (prevUserName != null) {
       await clearUserId(prevUserName);
@@ -988,6 +1021,8 @@ class Encatch {
     _stopPingInterval();
     _dismissFormController.add(const DismissPayload());
     _isFormVisible = false;
+    _heldIdentify = null;
+    rate.clearPauses();
 
     await Future.wait([
       if (_userName != null) ...[
@@ -1051,6 +1086,7 @@ class Encatch {
     String eventName,
     String? formConfigurationId,
   ) async {
+    if (rate.isPaused(rate.Bucket.tracking)) return;
     try {
       final deviceInfo = await _buildDeviceInfo();
       final req = TrackEventRequest(
@@ -1122,6 +1158,20 @@ class Encatch {
   }
 
   // ============================================================================
+  // Internal: 429 pause
+  // ============================================================================
+
+  /// When a tracking pause ends: send the identify held during it, then the
+  /// calls that were already in the queue.
+  static void _onPauseEnd(rate.Bucket bucket) {
+    if (bucket != rate.Bucket.tracking) return;
+    final held = _heldIdentify;
+    _heldIdentify = null;
+    if (held != null) held().catchError((_) {});
+    queue.flush().catchError((_) {});
+  }
+
+  // ============================================================================
   // Internal: reset for the SDK's own tests (reached through internals.dart)
   // ============================================================================
 
@@ -1130,6 +1180,10 @@ class Encatch {
     _stopPingInterval();
     queue.stopAppLifecycleListener();
     queue.clearForTest();
+    rate.clearPauses();
+    rate.clearListenersForTest();
+    _removePauseListener = null;
+    _heldIdentify = null;
     await clearSession();
 
     _initialized = false;
@@ -1275,13 +1329,17 @@ class Encatch {
 
     if (requestError != null) throw requestError;
     if (response!.statusCode < 200 || response.statusCode >= 300) {
+      final retryAfterMs = parseRetryAfter(
+        response.headers['retry-after'],
+        internals.nowMs(),
+      );
+      if (response.statusCode == 429) {
+        rate.pauseFor(rate.bucketOf(endpoint), retryAfterMs);
+      }
       throw EncatchHttpException(
         response.statusCode,
         response.body,
-        retryAfterMs: parseRetryAfter(
-          response.headers['retry-after'],
-          internals.nowMs(),
-        ),
+        retryAfterMs: retryAfterMs,
       );
     }
 

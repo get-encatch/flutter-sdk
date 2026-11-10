@@ -7,6 +7,7 @@
 ///   the first failure and 4 s after the second. Each item carries the time of
 ///   its next attempt; an item that is backing off does not hold up the others.
 /// - A 4xx reply drops that item only, and the flush goes on.
+/// - While a 429 pause is on (see rate_limit.dart), queued items are held.
 /// - Flushed again when the app returns to the foreground.
 /// - The queue's labels are written to SharedPreferences, but the calls
 ///   themselves are not, so nothing is re-sent after an app restart.
@@ -18,6 +19,7 @@ import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'http_error.dart';
 import 'internals.dart' as internals;
+import 'rate_limit.dart' as rate;
 import 'storage.dart' show storageKeyRetryQueue;
 
 const _maxRetries = 3;
@@ -193,6 +195,9 @@ Future<void> _run() async {
   _wakeTimer = null;
 
   while (true) {
+    // During a 429 pause, queued calls are held. The pause-end listener in
+    // encatch.dart flushes again when it is over.
+    if (rate.isPaused(rate.Bucket.tracking)) break;
     final item = _firstDue(internals.nowMs());
     if (item == null) break;
 
@@ -225,7 +230,7 @@ Future<void> _run() async {
 /// queued just as the run was ending), otherwise wake when the next item's
 /// backoff ends.
 void _afterRun() {
-  if (_queue.isEmpty) return;
+  if (_queue.isEmpty || rate.isPaused(rate.Bucket.tracking)) return;
   final now = internals.nowMs();
   if (_firstDue(now) != null) {
     flush().catchError((_) {});

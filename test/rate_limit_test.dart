@@ -1,7 +1,5 @@
-// Step 2 (429 pause). Fails on 1.1.2 until the fix lands.
-@Tags(['pending-fix'])
-library;
-
+// Step 2 (429 pause): a 429 pauses its bucket for Retry-After. These failed on
+// 1.1.2.
 import 'dart:io' show HttpDate;
 
 import 'package:clock/clock.dart';
@@ -50,6 +48,28 @@ void main() {
     // new calls go out again.
     expect(eventsOf(api), ['a', 'c']);
     expect(api.of('track-event').last.status, 200);
+  });
+
+  testFake('calls already queued are held, then sent once the pause ends', (
+    async,
+    api,
+  ) {
+    identify(async, 'alice');
+    api.clearRequests();
+    api.scenario.latency = const Duration(milliseconds: 100);
+    api.scenario.faults = [
+      Fault('track-event', status: 429, retryAfterSeconds: 20),
+    ];
+    // 'b' and 'c' are queued while 'a' is still in flight.
+    Encatch.trackEvent('a');
+    Encatch.trackEvent('b');
+    Encatch.trackEvent('c');
+    async.elapse(const Duration(seconds: 15));
+    expect(eventsOf(api), ['a']);
+
+    async.elapse(const Duration(seconds: 7));
+    expect(eventsOf(api), ['a', 'b', 'c']);
+    expect(api.count('track-event', status: 200), 2);
   });
 
   testFake('Retry-After can be an HTTP date', (async, api) {
