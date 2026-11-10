@@ -7,3 +7,7 @@
 tags:
   pending-fix:
     skip: "Describes a fix that has not landed yet. Run with --run-skipped --tags pending-fix."
+  # Runs over real HTTP against this repo's mock API (e2e/mock-api) on port
+  # 8797, which must be started first. See test/mock/mock_api_test.dart.
+  mock:
+    skip: "Needs the mock API on port 8797. Run with --run-skipped --tags mock."

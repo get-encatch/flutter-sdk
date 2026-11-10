@@ -6,3 +6,6 @@ build/
 
 # Local working documents (release plans) are never published.
 docs/
+
+# End-to-end app, mock API and flows are never published.
+e2e/

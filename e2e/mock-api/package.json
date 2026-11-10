@@ -1,0 +1,26 @@
+{
+  "name": "@encatch/mock-api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local mock of the Encatch gateway and core API, for SDK tests and the example apps. Never forwards to a real server. Snapshot copied from the React Native SDK repo (see SNAPSHOT.md).",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.6",
+    "hono": "^4.13.17"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.7",
+    "@encatch/schema": "^1.5.2",
+    "zod": "^4.0.0"
+  }
+}

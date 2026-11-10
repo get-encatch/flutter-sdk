@@ -17,3 +17,6 @@ build/
 # OS
 .DS_Store
 doc/
+# End-to-end tooling
+e2e/mock-api/node_modules/
+e2e/.results/
