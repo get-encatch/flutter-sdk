@@ -322,7 +322,32 @@ class Encatch {
     if (identifyKey != null && identifyKey == _lastIdentifyKey) return;
     _lastIdentifyKey = identifyKey;
 
+    return _serialized(
+      () => _identifyNow(userName, traits, options, identifyKey),
+    );
+  }
+
+  /// Runs identity changes one after the other, so a `resetUser()` followed
+  /// straight away by `identifyUser()`, neither awaited, ends as that user.
+  static Future<void> _identityLock = Future<void>.value();
+
+  static Future<void> _serialized(Future<void> Function() change) {
+    final previous = _identityLock;
+    final done = Completer<void>();
+    _identityLock = done.future;
+    return previous.then((_) => change()).whenComplete(done.complete);
+  }
+
+  static Future<void> _identifyNow(
+    String userName,
+    UserTraits? traits,
+    IdentifyOptions? options,
+    String? identifyKey,
+  ) async {
     _userName = userName;
+    // The id saved for this user, if there is one. Never another user's: the
+    // server rejects a name sent with an id that isn't its own.
+    _userId = await getUserId(userName);
     await setUserName(userName);
 
     if (options?.locale != null) {
@@ -355,7 +380,6 @@ class Encatch {
     final deviceInfo = await _buildDeviceInfo();
     final req = IdentifyUserRequest(
       userName: userName,
-      userId: _userId,
       userSignature: options?.secure?.signature ?? _userSignature,
       deviceInfo: deviceInfo,
       userAttributes: processedTraits,
@@ -370,7 +394,10 @@ class Encatch {
           req.toJson(),
           IdentifyUserResponse.fromJson,
           signatureTime: options?.secure?.generatedDateTimeinUTC,
+          identifyAs: userName,
         );
+        // A late reply: the app has reset or identified someone else since.
+        if (_userName != userName) return;
         if (res.userId != null) {
           _userId = res.userId;
           await setUserId(userName, res.userId!);
@@ -955,12 +982,8 @@ class Encatch {
           triggerType: TriggerType.automatic,
         );
       }
-    } catch (e) {
-      final msg = e.toString();
-      if (msg.contains('user_pending_retry_exhausted')) {
-        _stopPingInterval();
-        await resetUser();
-      }
+    } catch (_) {
+      // Ignored: the next ping comes on the interval.
     }
   }
 
@@ -969,7 +992,9 @@ class Encatch {
   // ============================================================================
 
   /// Resets the current user's identity and clears persisted data.
-  static Future<void> resetUser() async {
+  static Future<void> resetUser() => _serialized(_resetUserNow);
+
+  static Future<void> _resetUserNow() async {
     final prevUserName = _userName;
     final prevUserId = _userId;
     _heldIdentify = null;
@@ -1176,7 +1201,9 @@ class Encatch {
   /// Stronger than [resetUser] — also clears session-stopped state and device
   /// preferences. Equivalent to a factory reset of the SDK. The SDK remains
   /// initialized; call [identifyUser] to re-identify the user afterward.
-  static Future<void> clearAll() async {
+  static Future<void> clearAll() => _serialized(_clearAllNow);
+
+  static Future<void> _clearAllNow() async {
     _stopPingInterval();
     _dismissFormController.add(const DismissPayload());
     _isFormVisible = false;
@@ -1360,6 +1387,9 @@ class Encatch {
     _loadingFormId = null;
     _openFormRequestedId = null;
     _openFormConfigId = null;
+    // A fresh lock: one left over from an earlier test belongs to that test's
+    // fake clock and would never complete.
+    _identityLock = Future<void>.value();
     await clearSession();
 
     _initialized = false;
@@ -1447,13 +1477,26 @@ class Encatch {
   // Internal: build common request headers
   // ============================================================================
 
-  static Map<String, String> _buildHeaders({String? signatureTime}) {
+  ///
+  /// The identity headers go out both or neither: the server answers 401 to a
+  /// name without an id, or an id without a name. Until an identify reply has
+  /// given this user's id, requests are sent as a visitor.
+  ///
+  /// identify-user is the exception ([identifyAs]): it carries the name of the
+  /// user that call identifies, taken from the call itself, and never an id.
+  static Map<String, String> _buildHeaders({
+    String? signatureTime,
+    String? identifyAs,
+  }) {
+    final identified =
+        identifyAs == null && _userName != null && _userId != null;
     return <String, String>{
       'Content-Type': 'application/json',
       'X-Api-Key': _apiKey ?? '',
       if (_sessionId != null) 'X-Session-Id': _sessionId!,
-      if (_userName != null) 'X-User-Name': _userName!,
-      if (_userId != null) 'X-User-Id': _userId!,
+      if (identifyAs != null) 'X-User-Name': identifyAs,
+      if (identified) 'X-User-Name': _userName!,
+      if (identified) 'X-User-Id': _userId!,
       if (_userSignature != null) 'X-User-Signature': _userSignature!,
       if (_deviceId != null) 'X-Device-Id': _deviceId!,
       if (signatureTime != null) 'X-User-Signature-Time': signatureTime,
@@ -1470,10 +1513,14 @@ class Encatch {
     Map<String, dynamic> body,
     T Function(Map<String, dynamic>) fromJson, {
     String? signatureTime,
+    String? identifyAs,
   }) async {
     final url = Uri.parse('$_apiBaseUrl/$endpoint');
 
-    final headers = _buildHeaders(signatureTime: signatureTime);
+    final headers = _buildHeaders(
+      signatureTime: signatureTime,
+      identifyAs: identifyAs,
+    );
 
     final stopwatch = Stopwatch()..start();
     Object? requestError;
@@ -1520,6 +1567,20 @@ class Encatch {
     }
 
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    // The server sends camelCase; the snake_case spelling is accepted too.
+    if (decoded['userPendingRetryExhausted'] == true ||
+        decoded['user_pending_retry_exhausted'] == true) {
+      _onRetriesExhausted(headers['X-User-Name']);
+    }
     return fromJson(decoded);
+  }
+
+  /// The server gave up waiting for this user to be created. The SDK resets
+  /// the user, who is then a visitor until the app identifies again.
+  static void _onRetriesExhausted(String? sentAs) {
+    if (sentAs == null || sentAs != _userName) return;
+    _logger.debug('User "$sentAs" could not be confirmed; resetting the user');
+    _stopPingInterval();
+    resetUser().catchError((_) {});
   }
 }

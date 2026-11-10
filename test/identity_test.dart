@@ -1,7 +1,5 @@
-// Step 5 (identity). Fails on 1.1.2 until the fix lands.
-@Tags(['pending-fix'])
-library;
-
+// Step 5 (identity): identity headers both or neither, identify carries its
+// own name, and reset and identify run in order. These failed on 1.1.2.
 import 'package:encatch_flutter/encatch_flutter.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -179,5 +177,40 @@ void main() {
     Encatch.trackEvent('x');
     async.elapse(const Duration(seconds: 2));
     expect(Encatch.userName, isNull);
+  });
+  testFake(
+    "a request made during a user switch never carries the old user's id",
+    (async, api) {
+      identify(async, 'alice');
+      api.clearRequests();
+      api.scenario.latency = const Duration(milliseconds: 300);
+      Encatch.identifyUser('bob');
+      async.elapse(const Duration(milliseconds: 100));
+      Encatch.startSession(); // a ping while bob's identify is in flight
+      async.elapse(const Duration(seconds: 2));
+
+      expectBothOrNeither(api);
+      final aliceId = api.expectedUserId('alice');
+      expect(api.requests.where((r) => r.userId == aliceId), isEmpty);
+      expect(api.requests.where((r) => r.status == 401), isEmpty);
+      expect(Encatch.userId, api.expectedUserId('bob'));
+    },
+  );
+
+  testFake('a returning user is sent with both headers straight away', (
+    async,
+    api,
+  ) {
+    identify(async, 'alice');
+    // Restart: the name and its id were saved.
+    startSdk(api, keepStorage: true);
+    async.flushMicrotasks();
+    api.clearRequests();
+    Encatch.trackEvent('after-restart');
+    async.elapse(const Duration(seconds: 2));
+    final event = api.of('track-event').single;
+    expect(event.status, 200);
+    expect(event.userName, 'alice');
+    expect(event.userId, api.expectedUserId('alice'));
   });
 }
