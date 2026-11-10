@@ -3,6 +3,7 @@ library;
 
 import 'dart:async';
 
+import 'package:clock/clock.dart';
 import 'package:encatch_flutter/encatch_flutter.dart';
 import 'package:encatch_flutter/src/internals.dart' as internals;
 import 'package:encatch_flutter/src/types.dart' show ShowFormPayload;
@@ -53,6 +54,8 @@ Future<void> prepareSdk(
     buildSignature: '',
   );
   internals.sdkHttpClient = api.client;
+  // The SDK reads the time through this seam, so it follows fake time.
+  internals.nowMs = () => clock.now().millisecondsSinceEpoch;
 }
 
 /// Resets the SDK, points it at [api] and calls `Encatch.init`.

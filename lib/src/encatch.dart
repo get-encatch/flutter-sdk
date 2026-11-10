@@ -14,6 +14,7 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'device_info.dart';
 import 'form_presentation_registry.dart';
+import 'http_error.dart';
 import 'internals.dart' as internals;
 import 'logger.dart';
 import 'pending_completion_cta.dart';
@@ -191,6 +192,7 @@ class Encatch {
     internals.resetSdkForTest = _resetForTest;
     _debugMode = config?.debugMode ?? false;
     _logger = EncatchLogger(debugMode: _debugMode);
+    internals.sdkLogger = _logger;
 
     if (_initialized) {
       _logger.debug('SDK already initialized');
@@ -1156,6 +1158,7 @@ class Encatch {
     _onBeforeShowForm = null;
     _pendingResponses.clear();
     _logger = const EncatchLogger(debugMode: false);
+    internals.sdkLogger = _logger;
   }
 
   // ============================================================================
@@ -1247,11 +1250,11 @@ class Encatch {
     http.Response? response;
 
     try {
-      response = await internals.sdkHttpClient.post(
-        url,
-        headers: headers,
-        body: jsonEncode(body),
-      );
+      // A request that never answers must not block the retry queue. A
+      // timeout is handled like any other network failure.
+      response = await internals.sdkHttpClient
+          .post(url, headers: headers, body: jsonEncode(body))
+          .timeout(internals.requestTimeout);
     } catch (e) {
       requestError = e;
     }
@@ -1272,8 +1275,13 @@ class Encatch {
 
     if (requestError != null) throw requestError;
     if (response!.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception(
-        'Encatch API error: status ${response.statusCode} — ${response.body}',
+      throw EncatchHttpException(
+        response.statusCode,
+        response.body,
+        retryAfterMs: parseRetryAfter(
+          response.headers['retry-after'],
+          internals.nowMs(),
+        ),
       );
     }
 

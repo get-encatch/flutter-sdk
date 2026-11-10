@@ -1,7 +1,5 @@
-// Step 1 (retry queue). Fails on 1.1.2 until the fix lands.
-@Tags(['pending-fix'])
-library;
-
+// Step 1 (retry queue): one flush at a time, per-item backoff, and a request
+// timeout. These failed on 1.1.2.
 import 'package:encatch_flutter/encatch_flutter.dart';
 import 'package:flutter_test/flutter_test.dart';
 

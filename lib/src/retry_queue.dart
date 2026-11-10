@@ -1,18 +1,23 @@
-/// Offline retry queue for failed API calls.
-/// Mirrors retry-queue.ts from the React Native SDK.
+/// Retry queue for identify, track-event and track-screen calls.
 ///
-/// - Persisted to SharedPreferences so requests survive app restarts.
-/// - Automatically flushed when app returns to foreground (AppLifecycleState.resumed).
-/// - Max 3 retries per request with exponential backoff (1s → 2s → 4s).
-/// - Does NOT retry on 4xx client errors — these won't succeed on retry.
-/// - Retries 5xx server errors and network failures.
-/// - Only retries safe idempotent calls: identifyUser, trackEvent, trackScreen.
+/// - One flush runs at a time. A `flush()` call made during a run waits for
+///   that run, and the run keeps going until nothing is due, so a call queued
+///   while another is in flight is still sent.
+/// - A 5xx reply or a network failure is retried: 3 attempts in all, 2 s after
+///   the first failure and 4 s after the second. Each item carries the time of
+///   its next attempt; an item that is backing off does not hold up the others.
+/// - A 4xx reply drops that item only, and the flush goes on.
+/// - Flushed again when the app returns to the foreground.
+/// - The queue's labels are written to SharedPreferences, but the calls
+///   themselves are not, so nothing is re-sent after an app restart.
 library;
 
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'http_error.dart';
+import 'internals.dart' as internals;
 import 'storage.dart' show storageKeyRetryQueue;
 
 const _maxRetries = 3;
@@ -25,6 +30,9 @@ class _QueueItem {
   final int maxRetries;
   final int createdAt;
   final String label;
+
+  /// Earliest time (ms since the epoch) this item may be sent.
+  int nextAttemptAt = 0;
 
   _QueueItem({
     required this.id,
@@ -71,23 +79,26 @@ class _SerializableQueueItem {
 // In-memory queue (runtime)
 final _queue = <_QueueItem>[];
 
-bool _isFlushing = false;
+/// The flush in progress, if any.
+Future<void>? _running;
+
+/// Wakes the queue when the next backing-off item becomes due.
+Timer? _wakeTimer;
+
+int _idCounter = 0;
 
 // ============================================================================
 // Internal helpers
 // ============================================================================
 
-/// 4xx client errors should not be retried — they won't succeed.
+/// 4xx client errors are not retried: they won't succeed.
 bool _isClientError(Object err) {
-  final msg = err.toString();
-  final match = RegExp(r'status (\d+)').firstMatch(msg);
-  if (match == null) return false;
-  final status = int.tryParse(match.group(1) ?? '') ?? 0;
-  return status >= 400 && status < 500;
+  final status = httpStatusOf(err);
+  return status != null && status >= 400 && status < 500;
 }
 
-Duration _backoff(int retries) =>
-    Duration(milliseconds: _baseBackoffMs * (1 << retries));
+/// 2 s after the first failure, 4 s after the second.
+int _backoffMs(int retries) => _baseBackoffMs * (1 << retries);
 
 Future<void> _persistQueue() async {
   try {
@@ -126,6 +137,19 @@ Future<void> _removeFromPersisted(String id) async {
   }
 }
 
+Future<void> _drop(_QueueItem item) async {
+  _queue.remove(item);
+  await _removeFromPersisted(item.id);
+}
+
+/// The first queued item whose next attempt is due at [now], in queue order.
+_QueueItem? _firstDue(int now) {
+  for (final item in _queue) {
+    if (item.nextAttemptAt <= now) return item;
+  }
+  return null;
+}
+
 // ============================================================================
 // Public API
 // ============================================================================
@@ -134,108 +158,87 @@ Future<void> _removeFromPersisted(String id) async {
 ///
 /// [label] is a human-readable name used for debug output.
 /// [fn] is the async function to execute (closure capturing the request payload).
-/// [maxRetries] overrides the default max retries (default: 3).
+/// [maxRetries] is the number of attempts in all (default: 3).
 void enqueue(
   String label,
   Future<void> Function() fn, {
   int maxRetries = _maxRetries,
 }) {
+  final now = internals.nowMs();
   final item = _QueueItem(
-    id: '${DateTime.now().millisecondsSinceEpoch}-${_generateId()}',
+    id: '$now-${(_idCounter++).toRadixString(36)}',
     fn: fn,
     label: label,
     maxRetries: maxRetries,
-    createdAt: DateTime.now().millisecondsSinceEpoch,
+    createdAt: now,
   );
   _queue.add(item);
   _persistQueue();
 }
 
-String _generateId() {
-  // Simple random suffix for queue item IDs
-  final rand = DateTime.now().microsecondsSinceEpoch % 1000000;
-  return rand.toRadixString(36);
+/// Sends every queued call that is due, one at a time, in order.
+///
+/// Only one flush runs at a time: a call made while one is running returns
+/// that run's future. The run keeps going until nothing is due, so it also
+/// sends calls queued while it was running.
+Future<void> flush() {
+  return _running ??= _run().whenComplete(() {
+    _running = null;
+    _afterRun();
+  });
 }
 
-/// Attempt to flush all queued requests in order.
-/// Successful items are removed. Failed items have their retry count incremented.
-/// Items that exceed maxRetries are dropped.
-Future<void> flush() async {
-  if (_queue.isEmpty || _isFlushing) return;
-  _isFlushing = true;
+Future<void> _run() async {
+  _wakeTimer?.cancel();
+  _wakeTimer = null;
 
-  // Work on a snapshot to avoid mutation issues during iteration
-  final snapshot = List<_QueueItem>.from(_queue);
+  while (true) {
+    final item = _firstDue(internals.nowMs());
+    if (item == null) break;
 
-  for (final item in snapshot) {
     try {
       await item.fn();
-      _queue.removeWhere((q) => q.id == item.id);
-      await _removeFromPersisted(item.id);
+      await _drop(item);
     } catch (err) {
       if (_isClientError(err)) {
-        _queue.removeWhere((q) => q.id == item.id);
-        await _removeFromPersisted(item.id);
-        // ignore: avoid_print
-        print(
-          '[Encatch] Retry queue: dropping "${item.label}" (client error, no retry): $err',
+        await _drop(item);
+        internals.sdkLogger.debug(
+          'Retry queue: dropping "${item.label}" (client error, no retry): $err',
+        );
+        continue;
+      }
+      item.retries += 1;
+      if (item.retries >= item.maxRetries) {
+        await _drop(item);
+        internals.sdkLogger.debug(
+          'Retry queue: dropping "${item.label}" after ${item.maxRetries} attempts: $err',
         );
       } else {
-        item.retries += 1;
-        if (item.retries >= item.maxRetries) {
-          _queue.removeWhere((q) => q.id == item.id);
-          await _removeFromPersisted(item.id);
-          // ignore: avoid_print
-          print(
-            '[Encatch] Retry queue: dropping "${item.label}" after ${item.maxRetries} retries: $err',
-          );
-        } else {
-          final delay = _backoff(item.retries);
-          await _persistQueue();
-          Timer(delay, () => _flushSingle(item.id));
-        }
+        item.nextAttemptAt = internals.nowMs() + _backoffMs(item.retries);
+        await _persistQueue();
       }
     }
   }
-
-  _isFlushing = false;
 }
 
-Future<void> _flushSingle(String id) async {
-  final item = _queue.cast<_QueueItem?>().firstWhere(
-    (q) => q?.id == id,
-    orElse: () => null,
-  );
-  if (item == null) return;
-
-  try {
-    await item.fn();
-    _queue.removeWhere((q) => q.id == id);
-    await _removeFromPersisted(id);
-  } catch (err) {
-    if (_isClientError(err)) {
-      _queue.removeWhere((q) => q.id == id);
-      await _removeFromPersisted(id);
-      // ignore: avoid_print
-      print(
-        '[Encatch] Retry queue: dropping "${item.label}" (client error, no retry): $err',
-      );
-      return;
-    }
-    item.retries += 1;
-    if (item.retries >= item.maxRetries) {
-      _queue.removeWhere((q) => q.id == id);
-      await _removeFromPersisted(id);
-      // ignore: avoid_print
-      print(
-        '[Encatch] Retry queue: dropping "${item.label}" after ${item.maxRetries} retries: $err',
-      );
-    } else {
-      final delay = _backoff(item.retries);
-      await _persistQueue();
-      Timer(delay, () => _flushSingle(id));
-    }
+/// After a run: start another if something became due in the meantime (a call
+/// queued just as the run was ending), otherwise wake when the next item's
+/// backoff ends.
+void _afterRun() {
+  if (_queue.isEmpty) return;
+  final now = internals.nowMs();
+  if (_firstDue(now) != null) {
+    flush().catchError((_) {});
+    return;
   }
+  final next = _queue
+      .map((item) => item.nextAttemptAt)
+      .reduce((a, b) => a < b ? a : b);
+  _wakeTimer?.cancel();
+  _wakeTimer = Timer(Duration(milliseconds: next - now), () {
+    _wakeTimer = null;
+    flush().catchError((_) {});
+  });
 }
 
 /// Returns the current number of items in the in-memory queue.
@@ -244,7 +247,9 @@ int queueSize() => _queue.length;
 /// Empties the in-memory queue. For the SDK's own tests only.
 void clearForTest() {
   _queue.clear();
-  _isFlushing = false;
+  _wakeTimer?.cancel();
+  _wakeTimer = null;
+  _running = null;
 }
 
 // ============================================================================
