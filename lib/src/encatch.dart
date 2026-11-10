@@ -14,6 +14,7 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'device_info.dart';
 import 'form_presentation_registry.dart';
+import 'internals.dart' as internals;
 import 'logger.dart';
 import 'pending_completion_cta.dart';
 import 'retry_queue.dart' as queue;
@@ -156,9 +157,6 @@ class Encatch {
   // Logger
   static EncatchLogger _logger = const EncatchLogger(debugMode: false);
 
-  // HTTP client (replaceable for testing)
-  static http.Client _httpClient = http.Client();
-
   // Internal streams (used by EncatchWebView)
   static Stream<ShowFormPayload> get onShowForm => _showFormController.stream;
   static Stream<DismissPayload> get onDismissForm =>
@@ -190,6 +188,7 @@ class Encatch {
   /// Must be called before any other SDK methods. Safe to call multiple times —
   /// subsequent calls are no-ops if the SDK is already initialized.
   static Future<void> init(String apiKey, {EncatchConfig? config}) async {
+    internals.resetSdkForTest = _resetForTest;
     _debugMode = config?.debugMode ?? false;
     _logger = EncatchLogger(debugMode: _debugMode);
 
@@ -899,7 +898,7 @@ class Encatch {
 
     _logger.debug('Uploading file: $name');
 
-    final streamedResponse = await _httpClient.send(request);
+    final streamedResponse = await internals.sdkHttpClient.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -938,7 +937,7 @@ class Encatch {
       ..headers.addAll(headers)
       ..body = jsonEncode(params.toJson());
 
-    final streamedResponse = await _httpClient.send(request);
+    final streamedResponse = await internals.sdkHttpClient.send(request);
 
     if (streamedResponse.statusCode < 200 ||
         streamedResponse.statusCode >= 300) {
@@ -1121,6 +1120,45 @@ class Encatch {
   }
 
   // ============================================================================
+  // Internal: reset for the SDK's own tests (reached through internals.dart)
+  // ============================================================================
+
+  static Future<void> _resetForTest() async {
+    PendingCompletionCtaScheduler.cancelAll();
+    _stopPingInterval();
+    queue.stopAppLifecycleListener();
+    queue.clearForTest();
+    await clearSession();
+
+    _initialized = false;
+    _debugMode = false;
+    _apiKey = null;
+    _apiBaseUrl = _defaultApiBaseUrl;
+    _webHost = _defaultWebHost;
+    _isFullScreen = false;
+    _userName = null;
+    _userId = null;
+    _userSignature = null;
+    _locale = null;
+    _country = null;
+    _theme = EncatchTheme.system;
+    _currentScreen = null;
+    _deviceId = null;
+    _sessionId = null;
+    _feedbackTransactions = null;
+    _pingIntervalMs = 30000;
+    _isFormVisible = false;
+    _isSessionPaused = false;
+    _isSessionStopped = false;
+    _appVersion = '1.0.0';
+    _appPackageName = null;
+    _eventCallbacks.clear();
+    _onBeforeShowForm = null;
+    _pendingResponses.clear();
+    _logger = const EncatchLogger(debugMode: false);
+  }
+
+  // ============================================================================
   // Internal: build device info
   // ============================================================================
 
@@ -1209,7 +1247,7 @@ class Encatch {
     http.Response? response;
 
     try {
-      response = await _httpClient.post(
+      response = await internals.sdkHttpClient.post(
         url,
         headers: headers,
         body: jsonEncode(body),

@@ -3,3 +3,6 @@ doc/
 
 # Generated Flutter build output should never be published.
 build/
+
+# Local working documents (release plans) are never published.
+docs/

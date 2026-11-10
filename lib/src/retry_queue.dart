@@ -241,6 +241,12 @@ Future<void> _flushSingle(String id) async {
 /// Returns the current number of items in the in-memory queue.
 int queueSize() => _queue.length;
 
+/// Empties the in-memory queue. For the SDK's own tests only.
+void clearForTest() {
+  _queue.clear();
+  _isFlushing = false;
+}
+
 // ============================================================================
 // AppLifecycleState listener: flush on foreground
 // ============================================================================
