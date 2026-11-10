@@ -77,6 +77,18 @@ void report(String kind, Map<String, Object?> data) {
       .catchError((Object _) => http.Response('', 599));
 }
 
+/// Tells the local collector about a debug-hook call. Not shown on screen:
+/// there is one per request.
+void hook(Map<String, Object?> data) {
+  http
+      .post(
+        Uri.parse('${config.collector}/__mock/hooks'),
+        headers: {'content-type': 'application/json'},
+        body: jsonEncode({'kind': 'hook', ...data}),
+      )
+      .catchError((Object _) => http.Response('', 599));
+}
+
 /// A stable id for the test runner.
 Widget tid(String id, Widget child) =>
     Semantics(identifier: id, container: true, child: child);
@@ -139,6 +151,16 @@ class _E2eAppState extends State<E2eApp> {
           });
           return true;
         },
+        // The debug hooks, reported to the local collector so a run can check
+        // them. Only what the hooks carry: no key, headers or bodies.
+        onResponse: (info) => hook({
+          'endpoint': info.endpoint,
+          'attempt': info.attempt,
+          'outcome': info.outcome,
+          'status': info.status,
+          'reason': info.reason,
+          'rateLimited': info.rateLimited,
+        }),
       ),
       child: MaterialApp(
         title: 'Encatch FL E2E',

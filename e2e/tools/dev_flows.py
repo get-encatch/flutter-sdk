@@ -67,6 +67,8 @@ def collector(path, method='GET'):
 def reports():
     out = []
     for h in collector('/__mock/hooks'):
+        if h.get('kind') == 'hook':
+            continue  # debug-hook reports, one per request
         if h.get('kind') == 'beforeShowForm':
             out.append(f"beforeShowForm({FORMS.get(h.get('formId'), h.get('formId'))}, {h.get('trigger')})")
         else:
