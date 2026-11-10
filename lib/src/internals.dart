@@ -23,6 +23,16 @@ const requestTimeout = Duration(seconds: 30);
 /// the `Encatch` class log through this.
 EncatchLogger sdkLogger = const EncatchLogger(debugMode: false);
 
+/// True while the session is stopped (`Encatch.stopSession()`), including a
+/// stop saved by an earlier run of the app. Kept in step by `Encatch`; read by
+/// `EncatchProvider`, which then skips its session start at launch.
+bool sessionStopped = false;
+
+/// How `EncatchNavigatorObserver` reports a screen once the SDK is
+/// initialised. While the session is stopped the screen is remembered but not
+/// sent. Null until `Encatch.init` has been called.
+void Function(String screenName)? autoTrackScreen;
+
 /// Returns the SDK to its pre-`init` state. Registered by `Encatch.init`, so it
 /// is null until the SDK has been initialised once. Tests only.
 Future<void> Function()? resetSdkForTest;

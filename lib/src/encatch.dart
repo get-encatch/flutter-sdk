@@ -227,6 +227,7 @@ class Encatch {
   /// subsequent calls are no-ops if the SDK is already initialized.
   static Future<void> init(String apiKey, {EncatchConfig? config}) async {
     internals.resetSdkForTest = _resetForTest;
+    internals.autoTrackScreen = _trackScreenAutomatically;
     _debugMode = config?.debugMode ?? false;
     _logger = EncatchLogger(debugMode: _debugMode);
     internals.sdkLogger = _logger;
@@ -284,6 +285,10 @@ class Encatch {
       _feedbackTransactions = await getFeedbackTransactions('anonymous');
     }
 
+    // A session stopped in an earlier run of the app stays stopped.
+    _isSessionStopped = await getSessionStopped();
+    internals.sessionStopped = _isSessionStopped;
+
     _initialized = true;
 
     // Start retry queue lifecycle listener
@@ -294,7 +299,11 @@ class Encatch {
     final screenBeforeInit = _screenBeforeInit;
     _screenBeforeInit = null;
     if (screenBeforeInit != null) {
-      trackScreen(screenBeforeInit).catchError((_) {});
+      if (_isSessionStopped) {
+        _currentScreen = screenBeforeInit;
+      } else {
+        trackScreen(screenBeforeInit).catchError((_) {});
+      }
     }
 
     // Flush any queued requests from a previous session
@@ -935,6 +944,7 @@ class Encatch {
 
     // Clear stopped/paused state — startSession is the explicit re-enable after stopSession()
     _isSessionStopped = false;
+    internals.sessionStopped = false;
     _isSessionPaused = false;
     clearSessionStopped().catchError((_) {});
 
@@ -973,16 +983,26 @@ class Encatch {
     _startPingInterval();
   }
 
-  /// Fully suspends all SDK activity — stops the background ping and closes any
-  /// open forms. User identity is preserved; no re-identification needed.
-  /// Persists across app restarts via SharedPreferences. Re-enable with [startSession].
+  /// Stops the SDK's own activity: the background ping and
+  /// [EncatchNavigatorObserver]'s automatic screen tracking. It also closes the
+  /// open survey and cancels one that is waiting to show.
+  ///
+  /// The stop is saved, so it survives app restarts. It ends with
+  /// [startSession] or a successful [identifyUser].
+  ///
+  /// While stopped, calls the app makes itself still go out ([trackScreen],
+  /// [trackEvent], [identifyUser], [showForm] and submits), and a survey the
+  /// server chooses in their replies is still shown. The current screen keeps
+  /// updating, so it is tracked when the session starts again.
   static Future<void> stopSession() async {
     if (_isSessionStopped) return;
     _isSessionStopped = true;
+    internals.sessionStopped = true;
     _isSessionPaused = false;
     _stopPingInterval();
+    _cancelPendingAutoShow();
     _dismissFormController.add(const DismissPayload());
-    _isFormVisible = false;
+    setFormVisible(false);
     await setSessionStopped();
   }
 
@@ -1026,7 +1046,7 @@ class Encatch {
 
       if (res.pingAgainIn != null && res.pingAgainIn! > 0) {
         _pingIntervalMs = res.pingAgainIn! * 1000;
-        _startPingInterval();
+        if (_isPingActive) _startPingInterval();
       }
 
       await _handleSurveyInReply(
@@ -1072,9 +1092,11 @@ class Encatch {
     _country = null;
     _sessionId = await getOrCreateSessionId();
 
-    // Reset session control flags
+    // Reset session control flags, including a saved stop
     _isSessionPaused = false;
     _isSessionStopped = false;
+    internals.sessionStopped = false;
+    await clearSessionStopped();
 
     _stopPingInterval();
 
@@ -1290,6 +1312,7 @@ class Encatch {
     _country = null;
     _isSessionPaused = false;
     _isSessionStopped = false;
+    internals.sessionStopped = false;
     _sessionId = await getOrCreateSessionId();
 
     _logger.debug('clearAll: SDK storage wiped and state reset');
@@ -1420,6 +1443,20 @@ class Encatch {
   }
 
   // ============================================================================
+  // Internal: automatic screen tracking (EncatchNavigatorObserver)
+  // ============================================================================
+
+  /// A screen reported by the navigator observer. While the session is stopped
+  /// it is remembered, so `startSession()` can send it, but not sent.
+  static void _trackScreenAutomatically(String screenName) {
+    if (_isSessionStopped) {
+      _currentScreen = screenName;
+      return;
+    }
+    trackScreen(screenName).catchError((_) {});
+  }
+
+  // ============================================================================
   // Internal: 429 pause
   // ============================================================================
 
@@ -1489,6 +1526,7 @@ class Encatch {
     _isFormVisible = false;
     _isSessionPaused = false;
     _isSessionStopped = false;
+    internals.sessionStopped = false;
     _appVersion = '1.0.0';
     _appPackageName = null;
     _eventCallbacks.clear();
@@ -1546,7 +1584,9 @@ class Encatch {
   }) {
     if (pingAgainIn != null && pingAgainIn > 0) {
       _pingIntervalMs = pingAgainIn * 1000;
-      _startPingInterval();
+      // Only while pinging is active: a reply must not restart a ping the app
+      // stopped or paused.
+      if (_isPingActive) _startPingInterval();
     }
   }
 

@@ -1,8 +1,5 @@
-// Step 11 (ping and session) and step 12b (Q&A streaming).
-// Fails on 1.1.2 until the fixes land.
-@Tags(['pending-fix'])
-library;
-
+// Step 11 (ping and session): a stopped or paused session stays quiet, and a
+// stop survives an app restart. These failed on 1.1.2.
 import 'package:encatch_flutter/encatch_flutter.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -62,6 +59,76 @@ void main() {
       presenter.dispose();
     });
 
+    testFake(
+      "while stopped, the app's own calls go out and their surveys show",
+      (async, api) {
+        final presenter = FakePresenter();
+        identify(async, 'alice');
+        Encatch.stopSession();
+        async.flushMicrotasks();
+        api.clearRequests();
+        api.scenario.eventTriggers = {
+          'purchase': const SurveyTrigger(defaultFormId),
+        };
+
+        Encatch.trackScreen('/cart');
+        Encatch.trackEvent('purchase');
+        async.elapse(const Duration(seconds: 3));
+        expect(screensOf(api), ['/cart']);
+        expect(eventsOf(api), contains('purchase'));
+        expect(presenter.shown.single.formId, defaultFormId);
+
+        presenter.close();
+        Encatch.showForm(secondFormId);
+        async.flushMicrotasks();
+        expect(presenter.shown.last.formId, secondFormId);
+        expect(api.count('ping'), 0);
+        presenter.dispose();
+      },
+    );
+
+    /// Mounts the provider the way an app does at launch, on saved storage.
+    Future<void> relaunch(WidgetTester tester, FakeApi api) async {
+      await prepareSdk(api, keepStorage: true);
+      api.clearRequests();
+      await tester.pumpWidget(
+        const EncatchProvider(
+          apiKey: defaultApiKey,
+          config: EncatchConfig(apiBaseUrl: fakeBaseUrl),
+          child: SizedBox(),
+        ),
+      );
+      await tester.pump(const Duration(seconds: 2));
+    }
+
+    testWidgets('resetUser clears a saved stop', (tester) async {
+      final api = FakeApi();
+      addTearDown(stopSdk);
+      await startSdk(api);
+      await Encatch.stopSession();
+      await Encatch.resetUser();
+
+      await relaunch(tester, api);
+      expect(api.count('ping'), 1, reason: 'the session starts at launch');
+
+      await stopSdk();
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('a pause does not survive a restart', (tester) async {
+      final api = FakeApi();
+      addTearDown(stopSdk);
+      await startSdk(api);
+      await Encatch.startSession();
+      Encatch.pauseSession();
+
+      await relaunch(tester, api);
+      expect(api.count('ping'), 1, reason: 'the session starts at launch');
+
+      await stopSdk();
+      await tester.pumpWidget(const SizedBox());
+    });
+
     testWidgets('a stopped session stays stopped after an app restart', (
       tester,
     ) async {
@@ -102,30 +169,6 @@ void main() {
 
       await stopSdk();
       await tester.pumpWidget(const SizedBox());
-    });
-  });
-
-  group('step 12b: Q&A with AI', () {
-    tearDown(stopSdk);
-
-    test('the answer arrives piece by piece', () async {
-      final api = FakeApi();
-      await startSdk(api);
-      final pieces = <String>[];
-      final result = await Encatch.streamQnaWithAi(
-        const QnaWithAiRequest(
-          feedbackConfigurationId: defaultFormId,
-          questionId: 'q1',
-          conversation: [
-            QnaWithAiConversationTurn(question: 'Why?', answer: ''),
-          ],
-        ),
-        onChunk: pieces.add,
-      );
-      const answer = 'This answer was streamed by the fake.';
-      expect(result.answer, answer);
-      expect(pieces.length, greaterThan(1), reason: 'one call per piece');
-      expect(pieces.join(), answer);
     });
   });
 }

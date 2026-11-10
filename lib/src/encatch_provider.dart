@@ -16,6 +16,7 @@ library;
 import 'package:flutter/material.dart';
 import 'encatch.dart';
 import 'encatch_webview.dart';
+import 'internals.dart' as internals;
 import 'types.dart';
 
 // ============================================================================
@@ -74,7 +75,9 @@ class _EncatchProviderState extends State<EncatchProvider> {
     // Start a session for anonymous users immediately after init, mirroring the
     // React Native SDK behaviour. identifyUser() will start its own session
     // (with skipImmediatePing + skipImmediateTrackScreen) and take over.
-    if (!Encatch.isFullScreen) {
+    // A session the app stopped stays stopped across restarts, until the app
+    // calls Encatch.startSession() or identifies a user.
+    if (!Encatch.isFullScreen && !internals.sessionStopped) {
       await Encatch.startSession();
     }
   }
@@ -136,7 +139,13 @@ class EncatchNavigatorObserver extends NavigatorObserver {
     if (name != null && name.isNotEmpty && name != '/') {
       if (name == _lastTracked) return;
       _lastTracked = name;
-      Encatch.trackScreen(name).catchError((_) {});
+      final track = internals.autoTrackScreen;
+      if (track != null) {
+        track(name);
+      } else {
+        // Before init: remembered by the SDK and handled once init finishes.
+        Encatch.trackScreen(name).catchError((_) {});
+      }
     }
   }
 }
