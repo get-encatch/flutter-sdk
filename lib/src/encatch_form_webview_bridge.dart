@@ -26,6 +26,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'encatch.dart';
+import 'form_session.dart';
 import 'form_webview_helpers.dart';
 import 'logger.dart';
 import 'pending_completion_cta.dart';
@@ -80,8 +81,9 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
   InAppWebViewController? _controller;
   bool _webViewReady = false;
 
-  // Track which form journeys have already sent form:answered
-  final Set<String> _formAnsweredTracked = {};
+  // What the SDK does with this survey's messages (events, survey events,
+  // dismissal). One per survey shown.
+  late FormSession _session = FormSession(widget.payload.formId);
 
   // Instance key: incremented per new payload load to bust the WebView cache.
   int _instanceKey = 0;
@@ -99,7 +101,7 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
   void reloadForNewPayload() {
     _instanceKey++;
     _webViewReady = false;
-    _formAnsweredTracked.clear();
+    _session = FormSession(widget.payload.formId);
     if (_controller != null) {
       final url = _buildUrl();
       _controller!
@@ -149,6 +151,8 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
 
     _injectSdkMessage(SdkMessageType.formConfig, {
       ...config.toJson(),
+      // Without this the page blanks its own form id once the config arrives.
+      'formId': payload.formId,
       'triggerType': payload.triggerType.name,
       if (payload.context != null) 'context': payload.context,
     });
@@ -258,8 +262,7 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
                 ? TriggerType.automatic
                 : TriggerType.manual,
             formDetails: FormDetails(
-              formConfigurationId:
-                  data['feedbackConfigurationId'] as String? ?? '',
+              formConfigurationId: _session.formIdFor('', data),
               isPartialSubmit: data['isPartialSubmit'] as bool? ?? false,
               feedbackIdentifier: data['feedbackIdentifier'] as String?,
               responseLanguageCode: data['responseLanguageCode'] as String?,
@@ -274,29 +277,10 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
             ),
           ),
         ).catchError((_) {});
-        Encatch.emitEvent(
-          EventType.formSubmit,
-          EventPayload(
-            formId: formId,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            data: data,
-          ),
-        );
+        _session.submit(formId, data);
 
       case FormMessageType.formComplete:
-        Encatch.emitEvent(
-          EventType.formComplete,
-          EventPayload(
-            formId: formId,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            data: data,
-          ),
-        );
-        Encatch.trackFormEvent(
-          'form:complete',
-          data['feedbackConfigurationId'] as String?,
-        ).catchError((_) {});
-        _formAnsweredTracked.remove(formId);
+        _session.complete(formId, data);
         widget.onClose();
         final pendingRaw = data['pendingCompletionCta'];
         if (pendingRaw is Map) {
@@ -304,82 +288,29 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
             Map<String, dynamic>.from(pendingRaw),
           );
           if (pending != null) {
-            PendingCompletionCtaScheduler.schedule(formId, pending);
+            PendingCompletionCtaScheduler.schedule(
+              _session.formIdFor(formId, data),
+              pending,
+            );
           }
         }
 
       case FormMessageType.formClose:
-        Encatch.emitEvent(
-          EventType.formClose,
-          EventPayload(
-            formId: formId,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            data: data,
-          ),
-        );
-        _formAnsweredTracked.remove(
-          (data['feedbackConfigurationId'] as String?) ?? formId,
-        );
+        _session.close(formId, data);
         widget.onClose();
 
       case FormMessageType.formStarted:
-        Encatch.emitEvent(
-          EventType.formStarted,
-          EventPayload(
-            formId: formId,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            data: data,
-          ),
-        );
-        Encatch.trackFormEvent(
-          'form:started',
-          data['feedbackConfigurationId'] as String?,
-        ).catchError((_) {});
+        _session.started(formId, data);
 
       case FormMessageType.formAnswered:
-        Encatch.emitEvent(
-          EventType.formAnswered,
-          EventPayload(
-            formId: formId,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            data: data,
-          ),
-        );
-        final answeredKey =
-            (data['feedbackConfigurationId'] as String?) ?? formId;
-        if (answeredKey.isNotEmpty &&
-            !_formAnsweredTracked.contains(answeredKey)) {
-          _formAnsweredTracked.add(answeredKey);
-          Encatch.trackFormEvent(
-            'form:answered',
-            data['feedbackConfigurationId'] as String?,
-          ).catchError((_) {});
-        }
+        _session.answered(formId, data);
 
       case FormMessageType.formSectionChange:
         _applySectionHeightPolicy(data['sectionIndex']);
-        Encatch.emitEvent(
-          EventType.formSectionChange,
-          EventPayload(
-            formId: formId,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            data: data,
-          ),
-        );
+        _session.sectionChange(formId, data);
 
       case FormMessageType.formShow:
-        Encatch.emitEvent(
-          EventType.formShow,
-          EventPayload(
-            formId: formId,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            data: data,
-          ),
-        );
-        Encatch.trackFormEvent(
-          'form:show',
-          data['feedbackConfigurationId'] as String?,
-        ).catchError((_) {});
+        _session.show(formId, data);
 
       case FormMessageType.formRefineTextRequest:
         if (data.isEmpty) break;
@@ -387,8 +318,7 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
           final res = await Encatch.refineText(
             RefineTextRequest(
               questionId: data['questionId'] as String? ?? '',
-              feedbackConfigurationId:
-                  data['feedbackConfigurationId'] as String? ?? '',
+              feedbackConfigurationId: _session.formIdFor('', data),
               userText: data['userText'] as String? ?? '',
             ),
           );
@@ -406,14 +336,7 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
       case FormMessageType.formError:
         // ignore: avoid_print
         print('[${widget.logTag}] form:error received: $data');
-        Encatch.emitEvent(
-          EventType.formError,
-          EventPayload(
-            formId: formId,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            data: data,
-          ),
-        );
+        _session.error(formId, data);
 
       case FormMessageType.formLayout:
         widget.onForceFullHeight(_messageRequestsTallMaxHeight(data));
@@ -516,18 +439,7 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
             });
 
       case FormMessageType.formRemindMeLater:
-        Encatch.emitEvent(
-          EventType.formRemindMeLater,
-          EventPayload(
-            formId: formId,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            data: data,
-          ),
-        );
-        Encatch.trackFormEvent(
-          'form:remindmelater',
-          data['feedbackConfigurationId'] as String?,
-        ).catchError((_) {});
+        _session.remindMeLater(formId, data);
         widget.onClose();
 
       case FormMessageType.formCtaTriggered:
@@ -537,14 +449,7 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
         if (action == 'app_navigate') {
           // Emit first so host Encatch.on() subscribers can navigate, then close
           // the overlay the same way form:close does for redirect/dismiss CTAs.
-          Encatch.emitEvent(
-            EventType.formCtaTriggered,
-            EventPayload(
-              formId: formId,
-              timestamp: DateTime.now().millisecondsSinceEpoch,
-              data: data,
-            ),
-          );
+          _session.ctaTriggered(formId, data);
           widget.onClose();
         } else if ((action == 'redirect_internal' ||
                 action == 'redirect_external') &&
@@ -565,14 +470,7 @@ class EncatchFormWebViewBridgeState extends State<EncatchFormWebViewBridge> {
             });
           }
           // Form closes automatically via the form:close message sent by the engine.
-          Encatch.emitEvent(
-            EventType.formCtaTriggered,
-            EventPayload(
-              formId: formId,
-              timestamp: DateTime.now().millisecondsSinceEpoch,
-              data: data,
-            ),
-          );
+          _session.ctaTriggered(formId, data);
         }
 
       case null:
