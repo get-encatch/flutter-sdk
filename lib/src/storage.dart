@@ -125,6 +125,55 @@ Future<void> clearUserId(String userName) async {
 }
 
 // ============================================================================
+// User signature (secure mode), keyed by userName like the user id
+// ============================================================================
+
+const _keyUserSignaturePrefix = 'encatch_user_signature_';
+
+/// The signature saved after a successful secure identify, with the time it
+/// was signed for keys that have a session time.
+Future<({String signature, String? time})?> getUserSignature(
+  String userName,
+) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('$_keyUserSignaturePrefix$userName');
+    if (raw == null) return null;
+    final map = jsonDecode(raw) as Map<String, dynamic>;
+    final signature = map['signature'] as String?;
+    if (signature == null || signature.isEmpty) return null;
+    return (signature: signature, time: map['time'] as String?);
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<void> setUserSignature(
+  String userName,
+  String signature,
+  String? time,
+) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      '$_keyUserSignaturePrefix$userName',
+      jsonEncode({'signature': signature, 'time': ?time}),
+    );
+  } catch (_) {
+    // ignore
+  }
+}
+
+Future<void> clearUserSignature(String userName) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('$_keyUserSignaturePrefix$userName');
+  } catch (_) {
+    // ignore
+  }
+}
+
+// ============================================================================
 // Feedback Transactions
 // Keyed by identity key ('anonymous' or userName) — persisted across sessions.
 // ============================================================================

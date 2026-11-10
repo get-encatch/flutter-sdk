@@ -1,7 +1,5 @@
-// Step 9 (secure identify). Fails on 1.1.2 until the fix lands.
-@Tags(['pending-fix'])
-library;
-
+// Step 9 (secure identify): the signature goes in the headers the gateway
+// reads, then on every request for that user. These failed on 1.1.2.
 import 'package:encatch_flutter/encatch_flutter.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -110,6 +108,28 @@ void main() {
           api.of('ping').single.headers.containsKey('x-user-signature'),
           isFalse,
         );
+      },
+      apiKey: secureApiKey,
+      configure: (api) => api.scenario.enforceSignatureOnAllRequests = true,
+    );
+
+    testFake(
+      "a user switch never sends the previous user's signature",
+      (async, api) {
+        secureIdentify(async, api, 'alice', secureApiKey);
+        final aliceSignature = api.sign('alice', secureApiKey).signature;
+        api.clearRequests();
+
+        secureIdentify(async, api, 'bob', secureApiKey);
+        Encatch.trackEvent('as-bob');
+        async.elapse(const Duration(seconds: 2));
+        final bobSignature = api.sign('bob', secureApiKey).signature;
+        expect(api.requests, isNotEmpty);
+        for (final r in api.requests) {
+          expect(r.status, 200, reason: '$r');
+          expect(r.headers['x-user-signature'], bobSignature, reason: '$r');
+          expect(r.headers['x-user-signature'], isNot(aliceSignature));
+        }
       },
       apiKey: secureApiKey,
       configure: (api) => api.scenario.enforceSignatureOnAllRequests = true,

@@ -123,6 +123,13 @@ class Encatch {
   static String? _userId;
   static String? _userSignature;
 
+  // Secure mode. The time the stored signature was signed for (keys with a
+  // session time); whether that signature has expired; and what is waiting for
+  // the next successful identify.
+  static String? _userSignatureTime;
+  static bool _signatureExpired = false;
+  static Completer<void>? _identifiedAgain;
+
   // Preferences
   static String? _locale;
   static String? _country;
@@ -269,6 +276,9 @@ class Encatch {
     if (storedName != null) {
       _userName = storedName;
       _userId = await getUserId(storedName);
+      final signed = await getUserSignature(storedName);
+      _userSignature = signed?.signature;
+      _userSignatureTime = signed?.time;
       _feedbackTransactions = await getFeedbackTransactions(storedName);
     } else {
       _feedbackTransactions = await getFeedbackTransactions('anonymous');
@@ -344,6 +354,22 @@ class Encatch {
     IdentifyOptions? options,
     String? identifyKey,
   ) async {
+    final secure = options?.secure;
+    final previousUser = _userName;
+    if (previousUser != null && previousUser != userName) {
+      // A user switch: the previous user's signature goes with them.
+      _userSignature = null;
+      _userSignatureTime = null;
+      await clearUserSignature(previousUser);
+    }
+    if (secure == null) {
+      // Identifying without a signature clears a stored one. With one, the
+      // stored signature is replaced only when this identify succeeds.
+      _userSignature = null;
+      _userSignatureTime = null;
+      await clearUserSignature(userName);
+    }
+
     _userName = userName;
     // The id saved for this user, if there is one. Never another user's: the
     // server rejects a name sent with an id that isn't its own.
@@ -380,7 +406,7 @@ class Encatch {
     final deviceInfo = await _buildDeviceInfo();
     final req = IdentifyUserRequest(
       userName: userName,
-      userSignature: options?.secure?.signature ?? _userSignature,
+      userSignature: secure?.signature,
       deviceInfo: deviceInfo,
       userAttributes: processedTraits,
       feedbackTransactions: _feedbackTransactions,
@@ -399,11 +425,26 @@ class Encatch {
             raw = json;
             return IdentifyUserResponse.fromJson(json);
           },
-          signatureTime: options?.secure?.generatedDateTimeinUTC,
+          signatureTime: secure?.generatedDateTimeinUTC,
           identifyAs: userName,
+          identifySignature: secure?.signature,
         );
         // A late reply: the app has reset or identified someone else since.
         if (_userName != userName) return;
+        if (secure != null) {
+          // From now on the signature goes on every request for this user.
+          _userSignature = secure.signature;
+          _userSignatureTime = secure.generatedDateTimeinUTC;
+          await setUserSignature(
+            userName,
+            secure.signature,
+            secure.generatedDateTimeinUTC,
+          );
+        }
+        _signatureExpired = false;
+        final waiting = _identifiedAgain;
+        _identifiedAgain = null;
+        waiting?.complete();
         if (res.userId != null) {
           _userId = res.userId;
           await setUserId(userName, res.userId!);
@@ -488,7 +529,7 @@ class Encatch {
   /// Tracks a custom [eventName] and checks for matching form triggers.
   static Future<void> trackEvent(String eventName) async {
     if (!_initialized || _isFullScreen) return;
-    if (rate.isPaused(rate.Bucket.tracking)) return;
+    if (_backgroundPaused) return;
 
     // Identical events within the window are sent once.
     final now = internals.nowMs();
@@ -542,7 +583,7 @@ class Encatch {
     if (_isFullScreen) return;
 
     _currentScreen = screenName;
-    if (rate.isPaused(rate.Bucket.tracking)) return;
+    if (_backgroundPaused) return;
 
     // The same screen tracked again within the window is sent once. A visit
     // away and back (A, B, A) is tracked in full.
@@ -654,7 +695,7 @@ class Encatch {
     // manual show of the form that is already loading or open is ignored, so
     // answers in progress are kept; a different form still replaces it.
     if (triggerType == TriggerType.automatic) {
-      if (_surveyBusy) return;
+      if (_surveyBusy || _signatureExpired) return;
     } else if (_isLoadingOrOpen(formId)) {
       return;
     }
@@ -838,8 +879,12 @@ class Encatch {
 
     // A submit carries the user's answers, so it is never dropped for a 429:
     // it waits for the pause to end and is tried up to three times.
+    // After a secure signature has expired it is held until the app has
+    // identified again, then sent.
     late final SubmitFormResponse res;
+    var heldForSignature = false;
     for (var attempt = 1; ; attempt++) {
+      await _untilSignatureIsFresh();
       await rate.waitUntilResumed(rate.Bucket.submitForm);
       try {
         res = await _post<SubmitFormResponse>(
@@ -849,6 +894,10 @@ class Encatch {
         );
         break;
       } on EncatchHttpException catch (e) {
+        if (e.status == 401 && _signatureExpired && !heldForSignature) {
+          heldForSignature = true;
+          continue;
+        }
         if (e.status != 429 || attempt >= _submitAttemptsOn429) rethrow;
       }
     }
@@ -955,7 +1004,7 @@ class Encatch {
 
   static Future<void> _doPing() async {
     if (!_initialized || _isFullScreen || _isFormVisible) return;
-    if (rate.isPaused(rate.Bucket.tracking)) return;
+    if (_backgroundPaused) return;
 
     try {
       final deviceInfo = await _buildDeviceInfo();
@@ -1005,6 +1054,7 @@ class Encatch {
 
     if (prevUserName != null) {
       await clearUserId(prevUserName);
+      await clearUserSignature(prevUserName);
       await clearFeedbackTransactions(prevUserName);
     }
     await clearFeedbackTransactions('anonymous');
@@ -1015,6 +1065,8 @@ class Encatch {
     _userName = null;
     _userId = null;
     _userSignature = null;
+    _userSignatureTime = null;
+    _signatureExpired = false;
     _feedbackTransactions = null;
     _locale = null;
     _country = null;
@@ -1218,6 +1270,7 @@ class Encatch {
     await Future.wait([
       if (_userName != null) ...[
         clearUserId(_userName!),
+        clearUserSignature(_userName!),
         clearFeedbackTransactions(_userName!),
       ],
       clearFeedbackTransactions('anonymous'),
@@ -1230,6 +1283,8 @@ class Encatch {
     _userName = null;
     _userId = null;
     _userSignature = null;
+    _userSignatureTime = null;
+    _signatureExpired = false;
     _feedbackTransactions = null;
     _locale = null;
     _country = null;
@@ -1283,7 +1338,7 @@ class Encatch {
     String eventName,
     String? formConfigurationId,
   ) async {
-    if (rate.isPaused(rate.Bucket.tracking)) return;
+    if (_backgroundPaused) return;
     // Survey events are sent for identified users only: the server answers a
     // visitor's with 403. That covers the time before a new user's first
     // identify reply, when requests still go out as a visitor.
@@ -1368,6 +1423,12 @@ class Encatch {
   // Internal: 429 pause
   // ============================================================================
 
+  /// True while background traffic (events, screens, survey events, ping)
+  /// must not be sent: during a 429 pause, and after a secure signature has
+  /// expired until the app identifies again.
+  static bool get _backgroundPaused =>
+      rate.isPaused(rate.Bucket.tracking) || _signatureExpired;
+
   /// When a tracking pause ends: send the identify held during it, then the
   /// calls that were already in the queue.
   static void _onPauseEnd(rate.Bucket bucket) {
@@ -1403,6 +1464,9 @@ class Encatch {
     // A fresh lock: one left over from an earlier test belongs to that test's
     // fake clock and would never complete.
     _identityLock = Future<void>.value();
+    _userSignatureTime = null;
+    _signatureExpired = false;
+    _identifiedAgain = null;
     await clearSession();
 
     _initialized = false;
@@ -1500,9 +1564,20 @@ class Encatch {
   static Map<String, String> _buildHeaders({
     String? signatureTime,
     String? identifyAs,
+    String? identifySignature,
   }) {
     final identified =
         identifyAs == null && _userName != null && _userId != null;
+    // Secure mode. identify-user carries the signature that call was given.
+    // Every other request carries the one stored by the last successful
+    // secure identify, and only together with both identity headers: never on
+    // a visitor's request. The time goes out under both header names: the
+    // gateway reads X-User-Session-Time and is being changed to also accept
+    // X-User-Signature-Time.
+    final signature = identifyAs != null
+        ? identifySignature
+        : (identified ? _userSignature : null);
+    final time = identifyAs != null ? signatureTime : _userSignatureTime;
     return <String, String>{
       'Content-Type': 'application/json',
       'X-Api-Key': _apiKey ?? '',
@@ -1510,9 +1585,10 @@ class Encatch {
       if (identifyAs != null) 'X-User-Name': identifyAs,
       if (identified) 'X-User-Name': _userName!,
       if (identified) 'X-User-Id': _userId!,
-      if (_userSignature != null) 'X-User-Signature': _userSignature!,
+      if (signature != null) 'X-User-Signature': signature,
       if (_deviceId != null) 'X-Device-Id': _deviceId!,
-      if (signatureTime != null) 'X-User-Signature-Time': signatureTime,
+      if (signature != null && time != null) 'X-User-Session-Time': time,
+      if (signature != null && time != null) 'X-User-Signature-Time': time,
       if (_appPackageName != null) 'Referer': _appPackageName!,
     };
   }
@@ -1527,12 +1603,14 @@ class Encatch {
     T Function(Map<String, dynamic>) fromJson, {
     String? signatureTime,
     String? identifyAs,
+    String? identifySignature,
   }) async {
     final url = Uri.parse('$_apiBaseUrl/$endpoint');
 
     final headers = _buildHeaders(
       signatureTime: signatureTime,
       identifyAs: identifyAs,
+      identifySignature: identifySignature,
     );
 
     final stopwatch = Stopwatch()..start();
@@ -1572,6 +1650,15 @@ class Encatch {
       if (response.statusCode == 429) {
         rate.pauseFor(rate.bucketOf(endpoint), retryAfterMs);
       }
+      // A 401 on a request that carried a timed signature: it has expired.
+      if (response.statusCode == 401 &&
+          identifyAs == null &&
+          headers.containsKey('X-User-Session-Time')) {
+        _onSignatureExpired(
+          headers['X-User-Name'],
+          headers['X-User-Signature'],
+        );
+      }
       throw EncatchHttpException(
         response.statusCode,
         response.body,
@@ -1586,6 +1673,29 @@ class Encatch {
       _onRetriesExhausted(headers['X-User-Name']);
     }
     return fromJson(decoded);
+  }
+
+  /// The stored secure signature has passed its session time. It is dropped,
+  /// and background traffic stops until the app identifies again with a fresh
+  /// one, so the SDK doesn't send a stream of requests that all get 401.
+  static void _onSignatureExpired(String? sentAs, String? signature) {
+    if (sentAs == null || sentAs != _userName) return;
+    if (signature == null || signature != _userSignature) return;
+    _userSignature = null;
+    _userSignatureTime = null;
+    _signatureExpired = true;
+    clearUserSignature(sentAs).catchError((_) {});
+    _logger.warn(
+      'The secure signature for "$sentAs" has expired. Tracking is paused '
+      'until identifyUser is called again with a fresh signature.',
+    );
+  }
+
+  /// Completes at once unless a signature has expired, in which case it waits
+  /// for the next successful identify.
+  static Future<void> _untilSignatureIsFresh() async {
+    if (!_signatureExpired) return;
+    await (_identifiedAgain ??= Completer<void>()).future;
   }
 
   /// The server gave up waiting for this user to be created. The SDK resets
