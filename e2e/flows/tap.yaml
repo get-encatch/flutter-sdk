@@ -1,0 +1,5 @@
+# Taps one control by test id. The app must already be open.
+appId: com.encatch.fluttere2e
+---
+- tapOn:
+    id: ${ID}

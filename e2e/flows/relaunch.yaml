@@ -1,0 +1,13 @@
+# Closes the app and opens it again with its saved data, then continues
+# without identifying (an identify would end a stopped session).
+appId: com.encatch.fluttere2e
+---
+- stopApp
+- launchApp:
+    clearState: false
+- tapOn:
+    id: "setup-start"
+- tapOn:
+    id: "visitor-button"
+- assertVisible:
+    id: "tab-home"

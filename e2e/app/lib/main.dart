@@ -210,6 +210,9 @@ class _SetupScreenState extends State<SetupScreen> {
       _env = env;
       _apiBase.text = _defaultApiBase(env);
       _apiKey.text = _defaultApiKey(env);
+      // The built-in form id belongs to the mock. Start DEV with an empty
+      // field, so a test types the id it wants without having to erase.
+      _formId.text = env == 'dev' && _envDefault != 'dev' ? '' : _formIdDefault;
     });
   }
 

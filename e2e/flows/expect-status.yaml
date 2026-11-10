@@ -1,0 +1,16 @@
+# Refreshes the Home tab's status line and checks whether the SDK has a user
+# id. IDENTIFIED is yes or no.
+appId: com.encatch.fluttere2e
+---
+- tapOn:
+    id: "refresh-status"
+- runFlow:
+    when:
+      true: ${IDENTIFIED == 'yes'}
+    commands:
+      - assertVisible: ".*id: [0-9a-f]{8}-.*"
+- runFlow:
+    when:
+      true: ${IDENTIFIED == 'no'}
+    commands:
+      - assertVisible: ".*id: -"

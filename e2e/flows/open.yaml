@@ -1,0 +1,65 @@
+# Starts the app from clean and goes in.
+#   ENV       mock | dev
+#   IDENTITY  login | visitor
+#   API_KEY, FORM_ID   only for dev
+#   SECRET    a secure test key's secret (dev, optional)
+#   SESSION   yes when that key has a session time
+#   SIGNATURE none | valid | wrong
+# The runner passes every one of these on each call. Defaults are not set
+# here: a default in the flow file wins over a value passed on the command line.
+appId: com.encatch.fluttere2e
+---
+- launchApp:
+    clearState: true
+- runFlow:
+    when:
+      true: ${ENV == 'dev'}
+    commands:
+      - tapOn:
+          id: "env-dev"
+      - tapOn:
+          id: "setup-api-key"
+      - inputText: ${API_KEY}
+      # Enter closes the keyboard. Maestro's hideKeyboard does not work in
+      # this app on iOS.
+      - pressKey: Enter
+      - tapOn:
+          id: "setup-form-id"
+      - inputText: ${FORM_ID}
+      # Enter closes the keyboard. Maestro's hideKeyboard does not work in
+      # this app on iOS.
+      - pressKey: Enter
+- runFlow:
+    when:
+      true: ${SECRET != ''}
+    commands:
+      - tapOn:
+          id: "setup-secret"
+      - inputText: ${SECRET}
+      # Enter closes the keyboard. Maestro's hideKeyboard does not work in
+      # this app on iOS.
+      - pressKey: Enter
+- runFlow:
+    when:
+      true: ${SESSION == 'yes'}
+    commands:
+      - tapOn:
+          id: "setup-session-time"
+- tapOn:
+    id: "setup-start"
+- runFlow:
+    when:
+      true: ${IDENTITY == 'visitor'}
+    commands:
+      - tapOn:
+          id: "visitor-button"
+- runFlow:
+    when:
+      true: ${IDENTITY == 'login'}
+    commands:
+      - tapOn:
+          id: "sig-${SIGNATURE}"
+      - tapOn:
+          id: "login-button"
+- assertVisible:
+    id: "tab-home"

@@ -1,0 +1,7 @@
+# Waits for a control with this text (inside the survey, say) and taps it.
+appId: com.encatch.fluttere2e
+---
+- extendedWaitUntil:
+    visible: ${TEXT}
+    timeout: 25000
+- tapOn: ${TEXT}

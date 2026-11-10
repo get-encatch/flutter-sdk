@@ -1,0 +1,6 @@
+# Waits until something matching this text is on screen.
+appId: com.encatch.fluttere2e
+---
+- extendedWaitUntil:
+    visible: ${TEXT}
+    timeout: ${TIMEOUT}
