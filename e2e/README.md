@@ -35,12 +35,20 @@ Build and install the app first (`flutter build apk --release` in `e2e/app`, or 
 | M2 | Mock | A survey screen tracked 18 times: one show-form, no 404; the X is a dismissal |
 | M3 | Mock | A 429 pauses tracking; calls already queued go out once afterwards |
 | M4 | Mock | `resetUser()` then `identifyUser()`, not awaited: one identify, no 401 |
-| M5 | Mock | A visitor's survey sends no survey events and no dismissal |
+| M5 | Mock | A visitor's survey sends no survey events; the X sends dismiss-form only |
 | M6 | Mock | A stopped session stays stopped after the app is reopened |
 | M7 | Mock | The debug hooks match what the mock received |
+| M8 | Mock | The inline form shows in its slot; the X is a dismissal; it shows again |
+| M9 | Mock | `trackRootRoute`: a route named `/` is tracked only when the option is on |
+| M10 | Mock | Log out, then log in as another user: every later request carries the new user's name and id |
 | D1–D5 | DEV | Manual, page-visit, tracked-event, immediate and delayed triggers: the right form shows, events carry its id, the X is a dismissal |
-| D6–D7 | DEV | The same for a visitor (manual, page visit): no dismissal |
+| D6–D7 | DEV | The same for a visitor (manual, page visit): the X sends dismiss-form and no survey event |
 | D8–D11 | DEV | Secure identify: valid and wrong signature, with and without a session time |
+| D12 | DEV | The form is submitted; the X on the thank-you screen is not a dismissal |
+| D13 | DEV | Log out, then log in as another user: two different ids from the server, no failed request |
+| D14 | DEV | "Remind me later": the app event and the survey event, not a dismissal |
+| D15 | DEV | A real signature expiry on the session-time key. Slow (about 18 minutes): runs only with `--only D15` |
+| D16 | DEV | Q&A with AI: the answer arrives in pieces, and the form submits |
 
 ## Rules
 
@@ -48,4 +56,6 @@ Build and install the app first (`flutter build apk --release` in `e2e/app`, or 
 - **Always pass `--device`.** Other Maestro runs may be using other devices on the same machine.
 - **Port 8797 only.** Port 8787 belongs to the React Native SDK's mock.
 - **DEV project 1781 is shared** with the React Native tests. Don't change their forms or key; name anything new with an `FL` prefix.
+- **One run at a time per collector.** Every app reports to the collector on port 8797, so a second device used by hand while a suite runs gives false failures.
+- **Automatic DEV forms use `fl_` names only** (the remind-me-later form is triggered by the event `fl_remind_event`), so no other run on the project can trigger them.
 - Keys and secrets live in `.results/dev-project.json` and are never printed or committed.

@@ -1,0 +1,6 @@
+# Taps one point on the screen, "x,y" in the units of Maestro's own element
+# tree. For a control that has no text or id to find it by.
+appId: com.encatch.fluttere2e
+---
+- tapOn:
+    point: ${POINT}

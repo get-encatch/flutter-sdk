@@ -1,0 +1,7 @@
+# Types ${QUESTION} into the Q&A chat's input, which is at ${POINT} (it has no
+# text or id to find it by). The runner sends it with the "Ask AI" button.
+appId: com.encatch.fluttere2e
+---
+- tapOn:
+    point: ${POINT}
+- inputText: ${QUESTION}

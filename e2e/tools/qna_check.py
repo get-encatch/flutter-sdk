@@ -24,7 +24,10 @@ if __name__ == '__main__':
     d.adb('shell', 'pm', 'clear', d.APP)
     d.adb('shell', 'am', 'start', '-n', f'{d.APP}/.MainActivity')
     time.sleep(5)
-    d.tap('env-dev')
+    for _ in range(20):                      # a tap sent before the app is ready misses
+        if d.tap('env-dev'):
+            break
+        time.sleep(1)
     d.set_field('setup-api-key', d.DEV['sdkKey'])
     d.set_field('setup-form-id', d.DEV['forms']['qna']['id'])
     d.tap('setup-start', 3)
@@ -51,3 +54,16 @@ if __name__ == '__main__':
     growth = [c for c in changes if c[0] > 1.5 and c[1] > 0]
     print('frames where the screen changed (seconds after asking, bytes):', changes)
     print(f'the answer grew over {len(growth)} frames', '(streamed)' if len(growth) > 2 else '(arrived at once)')
+
+    # A Q&A conversation is only saved when the form is submitted. Close the
+    # chat (its own X, top right) and submit, so the response reaches the
+    # server; then look for it under Results > Individual Responses.
+    d.adb('shell', 'input', 'tap', '997', '308')
+    time.sleep(3)
+    submitted = False
+    for _ in range(10):
+        if d.tap('text:Submit', 8):
+            submitted = True
+            break
+        time.sleep(1)
+    print('form submitted:', submitted)

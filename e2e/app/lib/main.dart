@@ -39,6 +39,7 @@ class E2eConfig {
     required this.sessionTime,
     required this.collector,
     required this.formId,
+    required this.trackRoot,
   });
   final String env; // 'mock' or 'dev'
   final String apiBase;
@@ -52,6 +53,10 @@ class E2eConfig {
   /// Where the app reports what the SDK did. Always the local mock.
   final String collector;
   final String formId;
+
+  /// Passed to `EncatchNavigatorObserver(trackRootRoute:)`. Off by default,
+  /// like the SDK.
+  final bool trackRoot;
 
   bool get isMock => env == 'mock';
 }
@@ -164,7 +169,9 @@ class _E2eAppState extends State<E2eApp> {
       ),
       child: MaterialApp(
         title: 'Encatch FL E2E',
-        navigatorObservers: [EncatchNavigatorObserver()],
+        navigatorObservers: [
+          EncatchNavigatorObserver(trackRootRoute: config.trackRoot),
+        ],
         initialRoute: '/login',
         routes: {
           '/login': (_) => const LoginScreen(),
@@ -197,6 +204,7 @@ class _SetupScreenState extends State<SetupScreen> {
   final _secret = TextEditingController(text: _secretDefault);
   final _formId = TextEditingController(text: _formIdDefault);
   bool _sessionTime = _sessionTimeDefault;
+  bool _trackRoot = false;
 
   static String _defaultApiBase(String env) => _apiBaseDefault.isNotEmpty
       ? _apiBaseDefault
@@ -271,6 +279,14 @@ class _SetupScreenState extends State<SetupScreen> {
               decoration: const InputDecoration(labelText: 'Manual form id'),
             ),
           ),
+          tid(
+            'setup-track-root',
+            SwitchListTile(
+              title: const Text('Track the "/" route'),
+              value: _trackRoot,
+              onChanged: (v) => setState(() => _trackRoot = v),
+            ),
+          ),
           const SizedBox(height: 12),
           button('setup-start', 'Start', () {
             widget.onStart(
@@ -285,6 +301,7 @@ class _SetupScreenState extends State<SetupScreen> {
                     ? _collectorDefault
                     : _localMock,
                 formId: _formId.text.trim(),
+                trackRoot: _trackRoot,
               ),
             );
           }),
@@ -349,7 +366,7 @@ class _LoginScreenState extends State<LoginScreen> {
       name,
       options: secure == null ? null : IdentifyOptions(secure: secure),
     );
-    note('identify $name (${_mode.name})');
+    report('identify', {'userName': name, 'signature': _mode.name});
     if (mounted) Navigator.of(context).pushReplacementNamed('/home');
   }
 
@@ -453,7 +470,15 @@ class _HomeTabState extends State<HomeTab> {
           'status-user',
           Text('user: ${Encatch.userName ?? '-'} id: ${Encatch.userId ?? '-'}'),
         ),
-        button('refresh-status', 'Refresh status', () => setState(() {})),
+        // identifyUser() returns before the server replies, so the id is read
+        // here, later, and not straight after logging in.
+        button('refresh-status', 'Refresh status', () {
+          report('status', {
+            'userName': Encatch.userName ?? '',
+            'userId': Encatch.userId ?? '',
+          });
+          setState(() {});
+        }),
         button('open-dev-page', 'Open dev-page', () => open('/dev-page')),
         button(
           'open-dev-immediate',
@@ -466,6 +491,29 @@ class _HomeTabState extends State<HomeTab> {
           () => open('/dev-delayed'),
         ),
         button('open-checkout', 'Open checkout', () => open('/checkout')),
+        // A route named "/", which the observer only reports when
+        // trackRootRoute is on.
+        button(
+          'open-root',
+          'Open a route named "/"',
+          () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              settings: const RouteSettings(name: '/'),
+              builder: (_) => const PlainScreen('root'),
+            ),
+          ),
+        ),
+        // What an app does when its backend hands it a new signature.
+        button('reidentify', 'Identify again, fresh signature', () async {
+          final name = Encatch.userName;
+          if (name == null) return;
+          final secure = await sign(name, SignatureMode.valid);
+          await Encatch.identifyUser(
+            name,
+            options: secure == null ? null : IdentifyOptions(secure: secure),
+          );
+          report('identify', {'userName': name, 'signature': 'fresh'});
+        }),
         button('logout', 'Log out', () async {
           await Encatch.resetUser();
           note('logout');
@@ -502,6 +550,13 @@ class _EventsTabState extends State<EventsTab> {
           'track-dev-event',
           'Track dev_event',
           () => Encatch.trackEvent('dev_event'),
+        ),
+        // Triggers the DEV form that has a "Remind me later" button. The name
+        // starts with fl_ so no other test run on the project can trigger it.
+        button(
+          'track-fl-remind',
+          'Track fl_remind_event',
+          () => Encatch.trackEvent('fl_remind_event'),
         ),
         button(
           'track-custom-event',

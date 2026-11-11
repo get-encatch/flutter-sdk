@@ -1,0 +1,20 @@
+# Walks the DEV manual form (welcome, rating + long answer, thank-you): starts
+# it, picks a rating, submits, and waits for the thank-you screen.
+appId: com.encatch.fluttere2e
+---
+- extendedWaitUntil:
+    visible: "Get Started"
+    timeout: 25000
+- tapOn: "Get Started"
+- extendedWaitUntil:
+    visible: "Submit"
+    timeout: 15000
+# The rating buttons have no labels; the one just above "Excellent" is the
+# highest.
+- tapOn:
+    above: "Excellent"
+    optional: true
+- tapOn: "Submit"
+- extendedWaitUntil:
+    visible: "Thank you.*"
+    timeout: 20000
