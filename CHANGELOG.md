@@ -7,7 +7,7 @@ This release changes how much the SDK sends, how it identifies users and when it
 - `EncatchNavigatorObserver(trackRootRoute: true)`: track the `/` route. Off by default; planned to become the default in a later minor release.
 
 **Behaviour changes to be aware of**
-- Closing a survey with its X before the final submit is now a dismissal. For an identified user the SDK records it and `Encatch.on` listeners receive `EventType.formDismissed`. Visitors send nothing.
+- Closing a survey with its X before the final submit is now a dismissal, for identified users and visitors alike. The SDK records it and `Encatch.on` listeners receive `EventType.formDismissed`.
 - Survey events reach `Encatch.on` with the form's id. They used to carry an empty id.
 - `stopSession()` now survives an app restart, as documented. An app that relied on the next launch resuming by itself must call `startSession()` or identify a user.
 - Identical calls are sent once: an `identifyUser` identical to the last one, and the same event or screen tracked again within one second.

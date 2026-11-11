@@ -1,5 +1,6 @@
 // Step 10: closing a survey with its X before the final submit is a
-// dismissal, and survey events carry the form's id even when the survey page
+// dismissal (for a visitor too, who sends dismiss-form but no survey event),
+// and survey events carry the form's id even when the survey page
 // sends an empty one. On 1.1.2 the X sent nothing and the ids were empty (seen
 // on a device and on the DEV API).
 import 'package:encatch_flutter/encatch_flutter.dart';
@@ -81,6 +82,39 @@ void main() {
       expect(api.count('dismiss-form'), 1);
       expect(eventsOf(api), ['form:dismissed']);
     });
+
+    testFake('a visitor: dismiss-form only, no survey event', (async, api) {
+      final events = AppEvents();
+      final session = openSurvey(async, api);
+      api.clearRequests();
+
+      session.close(_noId, _closeData);
+      async.elapse(const Duration(seconds: 2));
+
+      expect(api.count('track-event'), 0);
+      final dismiss = api.requests.single;
+      expect(dismiss.endpoint, 'dismiss-form');
+      expect(dismiss.status, 200);
+      expect(dismiss.body['formConfigurationId'], defaultFormId);
+      expect(dismiss.userName, isNull);
+      expect(dismiss.userId, isNull);
+
+      expect(events.types, contains(EventType.formClose));
+      expect(events.seen, contains((EventType.formDismissed, defaultFormId)));
+    });
+
+    testFake('a visitor: a second close message changes nothing', (
+      async,
+      api,
+    ) {
+      final session = openSurvey(async, api);
+      api.clearRequests();
+      session.close(_noId, _closeData);
+      session.close(_noId, _closeData);
+      async.elapse(const Duration(seconds: 2));
+      expect(api.count('dismiss-form'), 1);
+      expect(api.count('track-event'), 0);
+    });
   });
 
   group('not a dismissal', () {
@@ -137,18 +171,27 @@ void main() {
       expectNoDismissal(api, events);
     });
 
-    testFake('a visitor closing with the X: nothing is sent at all', (
-      async,
-      api,
-    ) {
+    testFake('a visitor closing on the thank-you screen', (async, api) {
       final events = AppEvents();
       final session = openSurvey(async, api);
       api.clearRequests();
+      session.submit(_noId, const {'isPartialSubmit': false});
       session.close(_noId, _closeData);
       async.elapse(const Duration(seconds: 2));
       expect(api.requests, isEmpty);
       expect(events.types, isNot(contains(EventType.formDismissed)));
       expect(events.types, contains(EventType.formClose));
+    });
+
+    testFake('a visitor choosing "remind me later"', (async, api) {
+      final events = AppEvents();
+      final session = openSurvey(async, api);
+      api.clearRequests();
+      session.remindMeLater(_noId, const {});
+      session.close(_noId, _closeData);
+      async.elapse(const Duration(seconds: 2));
+      expect(api.requests, isEmpty);
+      expect(events.types, isNot(contains(EventType.formDismissed)));
     });
   });
 

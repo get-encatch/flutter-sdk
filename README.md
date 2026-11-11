@@ -154,7 +154,7 @@ final unsubscribe = Encatch.on((eventType, payload) {
 unsubscribe();
 ```
 
-When an identified user closes a survey with its X before the final submit, the SDK records a dismissal and your listener receives `EventType.formDismissed`. Closing on the thank-you screen, "remind me later" and call-to-action buttons are not dismissals.
+When a user closes a survey with its X before the final submit, the SDK records a dismissal and your listener receives `EventType.formDismissed`. This applies to identified users and visitors alike. Closing on the thank-you screen, "remind me later" and call-to-action buttons are not dismissals.
 
 ### 7. Pre-fill responses
 

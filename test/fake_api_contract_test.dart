@@ -414,7 +414,8 @@ void main() {
         200,
       );
 
-      // dismiss-form: a no-op for visitors, a UUID needed for known users.
+      // dismiss-form: answered 200 for visitors whatever the body, a UUID
+      // needed for known users.
       expect((await _post(api, 'dismiss-form')).statusCode, 200);
       final headers = _headers(
         userName: 'alice',

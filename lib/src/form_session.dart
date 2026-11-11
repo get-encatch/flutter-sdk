@@ -115,18 +115,19 @@ class FormSession {
   /// always follows the final submit), after "remind me later", or after a
   /// call-to-action button.
   ///
-  /// For an identified user a dismissal sends the `form:dismissed` survey
-  /// event and the dismiss-form request, and the app gets `form:dismissed`. A
-  /// visitor's sends nothing, not even the app's event: the server ignores
-  /// both for visitors.
+  /// A dismissal sends the dismiss-form request and the app gets
+  /// `form:dismissed`, for an identified user and a visitor alike. Only an
+  /// identified user's also sends the `form:dismissed` survey event: the
+  /// server rejects survey events from visitors.
   void close(String pageFormId, Map<String, dynamic> data) {
     _emit(EventType.formClose, pageFormId, data);
     if (_closed) return;
     _closed = true;
     if (_finalSubmitDone || _closingForAnotherReason) return;
-    if (Encatch.userName == null || Encatch.userId == null) return;
 
-    _track('form:dismissed', data);
+    if (Encatch.userName != null && Encatch.userId != null) {
+      _track('form:dismissed', data);
+    }
     // dismiss-form needs the form's UUID, which the page's close message does
     // not carry: use the one from the show-form reply.
     Encatch.dismissForm(formConfigurationId: configId).catchError((_) {});
