@@ -30,19 +30,18 @@ void main() {
     expect(api.requests, isEmpty);
   });
 
-  testFake(
-    'a 4xx drops that call and the next one still goes out',
-    (async, api) {
-      api.scenario.faults = [Fault('track-event', status: 400)];
-      Encatch.trackEvent('bad');
-      async.flushMicrotasks();
-      Encatch.trackEvent('good');
-      async.elapse(const Duration(seconds: 10));
-      expect(eventsOf(api), ['bad', 'good']);
-      expect(api.of('track-event').last.status, 200);
-    },
-    configure: (api) => api.scenario.allowTrackEventForVisitors = true,
-  );
+  testFake('a 4xx drops that call and the next one still goes out', (
+    async,
+    api,
+  ) {
+    api.scenario.faults = [Fault('track-event', status: 400)];
+    Encatch.trackEvent('bad');
+    async.flushMicrotasks();
+    Encatch.trackEvent('good');
+    async.elapse(const Duration(seconds: 10));
+    expect(eventsOf(api), ['bad', 'good']);
+    expect(api.of('track-event').last.status, 200);
+  }, configure: (api) => api.scenario.allowTrackEventForVisitors = true);
 
   testFake(
     'a 5xx is tried three times in all, 2 s then 4 s apart, then dropped',
@@ -65,18 +64,14 @@ void main() {
     configure: (api) => api.scenario.allowTrackEventForVisitors = true,
   );
 
-  testFake(
-    "a 429'd tracking call is never retried",
-    (async, api) {
-      api.scenario.faults = [
-        Fault('track-event', status: 429, retryAfterSeconds: 5),
-      ];
-      Encatch.trackEvent('limited');
-      async.elapse(const Duration(minutes: 10));
-      expect(eventsOf(api), ['limited']);
-    },
-    configure: (api) => api.scenario.allowTrackEventForVisitors = true,
-  );
+  testFake("a 429'd tracking call is never retried", (async, api) {
+    api.scenario.faults = [
+      Fault('track-event', status: 429, retryAfterSeconds: 5),
+    ];
+    Encatch.trackEvent('limited');
+    async.elapse(const Duration(minutes: 10));
+    expect(eventsOf(api), ['limited']);
+  }, configure: (api) => api.scenario.allowTrackEventForVisitors = true);
 
   testFake('a manual showForm for a different form replaces the open one', (
     async,
@@ -142,18 +137,14 @@ void main() {
     }
   });
 
-  testFake(
-    "a visitor's own trackEvent still goes out",
-    (async, api) {
-      Encatch.trackEvent('visitor-tap');
-      async.flushMicrotasks();
-      final event = api.of('track-event').single;
-      expect(event.status, 200);
-      expect(event.userName, isNull);
-      expect(event.userId, isNull);
-    },
-    configure: (api) => api.scenario.allowTrackEventForVisitors = true,
-  );
+  testFake("a visitor's own trackEvent still goes out", (async, api) {
+    Encatch.trackEvent('visitor-tap');
+    async.flushMicrotasks();
+    final event = api.of('track-event').single;
+    expect(event.status, 200);
+    expect(event.userName, isNull);
+    expect(event.userId, isNull);
+  }, configure: (api) => api.scenario.allowTrackEventForVisitors = true);
 
   testFake('a successful identify resumes a stopped session', (async, api) {
     identify(async, 'alice');

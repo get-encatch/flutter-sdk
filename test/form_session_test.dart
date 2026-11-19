@@ -103,10 +103,7 @@ void main() {
       expect(events.seen, contains((EventType.formDismissed, defaultFormId)));
     });
 
-    testFake('a visitor: a second close message changes nothing', (
-      async,
-      api,
-    ) {
+    testFake('a visitor: a second close message changes nothing', (async, api) {
       final session = openSurvey(async, api);
       api.clearRequests();
       session.close(_noId, _closeData);

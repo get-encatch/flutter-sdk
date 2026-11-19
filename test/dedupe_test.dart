@@ -101,25 +101,21 @@ void main() {
     expect(api.count('identify-user'), 2);
   });
 
-  testFake(
-    'identical events within one second collapse to one',
-    (async, api) {
-      for (var i = 0; i < 20; i++) {
-        Encatch.trackEvent('tap');
-      }
-      async.elapse(const Duration(milliseconds: 900));
-      expect(eventsOf(api), ['tap']);
-
-      // Outside the window the same event counts again; a different name is
-      // never collapsed.
-      async.elapse(const Duration(milliseconds: 200));
+  testFake('identical events within one second collapse to one', (async, api) {
+    for (var i = 0; i < 20; i++) {
       Encatch.trackEvent('tap');
-      Encatch.trackEvent('other');
-      async.elapse(const Duration(seconds: 2));
-      expect(eventsOf(api), ['tap', 'tap', 'other']);
-    },
-    configure: (api) => api.scenario.allowTrackEventForVisitors = true,
-  );
+    }
+    async.elapse(const Duration(milliseconds: 900));
+    expect(eventsOf(api), ['tap']);
+
+    // Outside the window the same event counts again; a different name is
+    // never collapsed.
+    async.elapse(const Duration(milliseconds: 200));
+    Encatch.trackEvent('tap');
+    Encatch.trackEvent('other');
+    async.elapse(const Duration(seconds: 2));
+    expect(eventsOf(api), ['tap', 'tap', 'other']);
+  }, configure: (api) => api.scenario.allowTrackEventForVisitors = true);
 
   testFake('identical screens collapse, but A, B, A is kept', (async, api) {
     for (var i = 0; i < 20; i++) {

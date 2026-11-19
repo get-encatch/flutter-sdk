@@ -22,34 +22,29 @@ void main() {
     expect(screensOf(api), ['/home']);
   });
 
-  testFake(
-    'twenty different events are each sent once',
-    (async, api) {
-      api.scenario.latency = const Duration(milliseconds: 20);
-      for (var i = 0; i < 20; i++) {
-        Encatch.trackEvent('event-$i');
-      }
-      async.elapse(const Duration(seconds: 8));
-      expect(eventsOf(api), [for (var i = 0; i < 20; i++) 'event-$i']);
-    },
-    configure: (api) => api.scenario.allowTrackEventForVisitors = true,
-  );
+  testFake('twenty different events are each sent once', (async, api) {
+    api.scenario.latency = const Duration(milliseconds: 20);
+    for (var i = 0; i < 20; i++) {
+      Encatch.trackEvent('event-$i');
+    }
+    async.elapse(const Duration(seconds: 8));
+    expect(eventsOf(api), [for (var i = 0; i < 20; i++) 'event-$i']);
+  }, configure: (api) => api.scenario.allowTrackEventForVisitors = true);
 
-  testFake(
-    'a request that never answers does not block the queue',
-    (async, api) {
-      api.scenario.faults = [Fault('track-event', hang: true)];
-      Encatch.trackEvent('first');
-      async.flushMicrotasks();
-      Encatch.trackEvent('second');
-      async.flushMicrotasks();
+  testFake('a request that never answers does not block the queue', (
+    async,
+    api,
+  ) {
+    api.scenario.faults = [Fault('track-event', hang: true)];
+    Encatch.trackEvent('first');
+    async.flushMicrotasks();
+    Encatch.trackEvent('second');
+    async.flushMicrotasks();
 
-      // The first request times out after 30 s; the second then goes out.
-      async.elapse(const Duration(seconds: 31));
-      expect(eventsOf(api).where((e) => e == 'second'), hasLength(1));
-    },
-    configure: (api) => api.scenario.allowTrackEventForVisitors = true,
-  );
+    // The first request times out after 30 s; the second then goes out.
+    async.elapse(const Duration(seconds: 31));
+    expect(eventsOf(api).where((e) => e == 'second'), hasLength(1));
+  }, configure: (api) => api.scenario.allowTrackEventForVisitors = true);
 
   testFake(
     'a failed call waits for its backoff even when another call arrives',

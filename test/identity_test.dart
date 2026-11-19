@@ -17,25 +17,24 @@ void expectBothOrNeither(FakeApi api) {
 }
 
 void main() {
-  testFake(
-    'after a failed first identify, requests go out as a visitor',
-    (async, api) {
-      api.scenario.faults = [
-        Fault('identify-user', status: 429, retryAfterSeconds: 1),
-      ];
-      Encatch.identifyUser('alice');
-      async.elapse(const Duration(seconds: 3));
+  testFake('after a failed first identify, requests go out as a visitor', (
+    async,
+    api,
+  ) {
+    api.scenario.faults = [
+      Fault('identify-user', status: 429, retryAfterSeconds: 1),
+    ];
+    Encatch.identifyUser('alice');
+    async.elapse(const Duration(seconds: 3));
 
-      Encatch.trackEvent('after');
-      async.elapse(const Duration(seconds: 2));
-      final event = api.of('track-event').single;
-      expect(event.userName, isNull);
-      expect(event.userId, isNull);
-      expect(event.status, 200);
-      expect(api.requests.where((r) => r.status == 401), isEmpty);
-    },
-    configure: (api) => api.scenario.allowTrackEventForVisitors = true,
-  );
+    Encatch.trackEvent('after');
+    async.elapse(const Duration(seconds: 2));
+    final event = api.of('track-event').single;
+    expect(event.userName, isNull);
+    expect(event.userId, isNull);
+    expect(event.status, 200);
+    expect(api.requests.where((r) => r.status == 401), isEmpty);
+  }, configure: (api) => api.scenario.allowTrackEventForVisitors = true);
 
   testFake('while the first identify is in flight, others go as a visitor', (
     async,
