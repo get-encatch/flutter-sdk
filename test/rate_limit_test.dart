@@ -141,9 +141,14 @@ void main() {
     ];
     var done = false;
     Object? error;
-    Encatch.submitForm(
-      _submit,
-    ).then((_) => done = true, onError: (Object e) => error = e);
+    Encatch.submitForm(_submit).then(
+      (_) {
+        done = true;
+      },
+      onError: (Object e) {
+        error = e;
+      },
+    );
     async.flushMicrotasks();
     expect(api.of('submit-form').single.status, 429);
 
