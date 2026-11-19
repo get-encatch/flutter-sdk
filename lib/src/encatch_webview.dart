@@ -12,7 +12,7 @@
 library;
 
 import 'dart:async';
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'encatch.dart';
 import 'encatch_form_webview_bridge.dart';
 import 'form_webview_helpers.dart';
@@ -424,67 +424,64 @@ class _EncatchFormOverlayState extends State<_EncatchFormOverlay>
 
     final skeletonMode = formTheme.activeMode;
 
-    // Material is required so widgets like Text, InkWell work correctly
-    // inside an OverlayEntry (which has no Material ancestor by default).
-    return Material(
-      type: MaterialType.transparency,
-      child: AnimatedBuilder(
-        animation: _entranceController,
-        builder: (context, child) {
-          return Opacity(
-            opacity: _fadeAnimation.value,
-            child: Container(
-              width: double.infinity,
-              height: double.infinity,
-              color: modalOverlayBackgroundColor,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (!darkOverlay)
-                    ModalBackdropBlur(activeMode: formTheme.activeMode),
-                  Padding(
-                    padding: shellPadding,
-                    child: Column(
-                      mainAxisAlignment: _isFullCenter
-                          ? MainAxisAlignment.start
-                          : alignment.main,
-                      crossAxisAlignment: _isFullCenter
-                          ? CrossAxisAlignment.stretch
-                          : alignment.cross,
-                      children: [
-                        if (_isFullCenter)
-                          Expanded(
-                            child: _buildPopup(
-                              popupWidth: popupWidth,
-                              maxHeight: maxHeight,
-                              forcedHeight: forcedHeight,
-                              borderRadius: borderRadius,
-                              backgroundColor: backgroundColor,
-                              usesScaleAnimation: usesScaleAnimation,
-                              usesFixedViewportHeight: true,
-                              skeletonMode: skeletonMode,
-                            ),
-                          )
-                        else
-                          _buildPopup(
+    // No Material wrapper: nothing below draws text or ink, and the SDK
+    // imports no design library (see test/no_design_library_test.dart).
+    return AnimatedBuilder(
+      animation: _entranceController,
+      builder: (context, child) {
+        return Opacity(
+          opacity: _fadeAnimation.value,
+          child: Container(
+            width: double.infinity,
+            height: double.infinity,
+            color: modalOverlayBackgroundColor,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (!darkOverlay)
+                  ModalBackdropBlur(activeMode: formTheme.activeMode),
+                Padding(
+                  padding: shellPadding,
+                  child: Column(
+                    mainAxisAlignment: _isFullCenter
+                        ? MainAxisAlignment.start
+                        : alignment.main,
+                    crossAxisAlignment: _isFullCenter
+                        ? CrossAxisAlignment.stretch
+                        : alignment.cross,
+                    children: [
+                      if (_isFullCenter)
+                        Expanded(
+                          child: _buildPopup(
                             popupWidth: popupWidth,
                             maxHeight: maxHeight,
                             forcedHeight: forcedHeight,
                             borderRadius: borderRadius,
                             backgroundColor: backgroundColor,
                             usesScaleAnimation: usesScaleAnimation,
-                            usesFixedViewportHeight: usesFixedViewportHeight,
+                            usesFixedViewportHeight: true,
                             skeletonMode: skeletonMode,
                           ),
-                      ],
-                    ),
+                        )
+                      else
+                        _buildPopup(
+                          popupWidth: popupWidth,
+                          maxHeight: maxHeight,
+                          forcedHeight: forcedHeight,
+                          borderRadius: borderRadius,
+                          backgroundColor: backgroundColor,
+                          usesScaleAnimation: usesScaleAnimation,
+                          usesFixedViewportHeight: usesFixedViewportHeight,
+                          skeletonMode: skeletonMode,
+                        ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 

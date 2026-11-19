@@ -13,7 +13,7 @@
 /// Also exports EncatchNavigatorObserver for optional automatic screen tracking.
 library;
 
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'encatch.dart';
 import 'encatch_webview.dart';
 import 'internals.dart' as internals;

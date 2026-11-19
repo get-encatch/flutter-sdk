@@ -26,7 +26,7 @@
 library;
 
 import 'dart:async';
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'encatch.dart';
 import 'encatch_form_webview_bridge.dart';
 import 'form_presentation_registry.dart';

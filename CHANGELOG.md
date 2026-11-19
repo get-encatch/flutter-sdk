@@ -43,6 +43,9 @@ This release changes how much the SDK sends, how it identifies users and when it
 - A reply from the server no longer restarts the ping after `stopSession()` or `pauseSession()`.
 - The first screen, tracked before `init` finished, is no longer lost.
 
+**Maintenance**
+- The SDK no longer imports Flutter's Material library, which Flutter 3.50 deprecated. It uses the widgets library only, so it works the same in apps that still use `package:flutter/material.dart` and in apps that have moved to `material_ui`. The minimum Flutter version is unchanged, and surveys look the same.
+
 ## 1.1.2
 - Align submit-contract types with `@encatch/schema` 1.5.2: add `QuestionResponse.error`, `timeSpentMs`, `isPathTraversed`, explicit null answers, and `FormDetailsResponse`.
 - Change `PaymentsUpiAnswer.amount` to a decimal string (schema wire format) with `PaymentsUpiAnswer.fromNumericAmount` helper.

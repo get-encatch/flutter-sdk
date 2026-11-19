@@ -7,7 +7,7 @@
 /// Mirrors FormWebViewLoading.tsx / FormWebViewSkeleton from the React Native SDK.
 library;
 
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 
 class FormWebViewSkeleton extends StatefulWidget {
   final Color backgroundColor;

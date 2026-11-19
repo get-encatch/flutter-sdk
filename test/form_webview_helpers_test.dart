@@ -1,7 +1,11 @@
 import 'package:encatch_flutter/src/form_webview_helpers.dart';
 import 'package:encatch_flutter/src/types.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+const _white = Color(0xFFFFFFFF);
+const _black = Color(0xFF000000);
+const _transparent = Color(0x00000000);
 
 void main() {
   group('buildFormWebViewUrl', () {
@@ -105,14 +109,14 @@ void main() {
     test('prefers --background over --popover', () {
       final color = getBackgroundColor(
         '{"--background":"#112233","--popover":"#000000"}',
-        Colors.white,
+        _white,
       );
 
       expect(color, const Color(0xFF112233));
     });
 
     test('falls back to --popover when --background is missing', () {
-      final color = getBackgroundColor('{"--popover":"#445566"}', Colors.white);
+      final color = getBackgroundColor('{"--popover":"#445566"}', _white);
 
       expect(color, const Color(0xFF445566));
     });
@@ -120,7 +124,7 @@ void main() {
     test('parses rgb colors', () {
       final color = getBackgroundColor(
         '{"--background":"rgb(17, 34, 51)"}',
-        Colors.white,
+        _white,
       );
 
       expect(color, const Color(0xFF112233));
@@ -129,7 +133,7 @@ void main() {
     test('parses rgba colors with decimal alpha', () {
       final color = getBackgroundColor(
         '{"--background":"rgba(255, 128, 0, 0.5)"}',
-        Colors.white,
+        _white,
       );
 
       expect(color, const Color(0x80FF8000));
@@ -138,24 +142,24 @@ void main() {
     test('parses rgba colors with percent alpha', () {
       final color = getBackgroundColor(
         '{"--background":"rgba(255, 255, 255, 100%)"}',
-        Colors.black,
+        _black,
       );
 
-      expect(color, Colors.white);
+      expect(color, _white);
     });
 
     test('uses fallback for invalid or empty theme JSON', () {
-      expect(getBackgroundColor('{}', Colors.white), Colors.white);
-      expect(getBackgroundColor('not-json', Colors.black), Colors.black);
+      expect(getBackgroundColor('{}', _white), _white);
+      expect(getBackgroundColor('not-json', _black), _black);
     });
 
     test('uses fallback for unsupported oklch colors', () {
       final color = getBackgroundColor(
         '{"--background":"oklch(0.98 0.02 250)","--popover":"#445566"}',
-        Colors.white,
+        _white,
       );
 
-      expect(color, Colors.white);
+      expect(color, _white);
     });
   });
 
@@ -452,7 +456,7 @@ void main() {
             activeMode: Brightness.light,
             darkOverlay: false,
           ),
-          Colors.transparent,
+          _transparent,
         );
       },
     );

@@ -3,8 +3,11 @@
 library;
 
 import 'dart:convert';
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'types.dart';
+
+const Color _white = Color(0xFFFFFFFF);
+const Color _transparent = Color(0x00000000);
 
 // ============================================================================
 // URL builder
@@ -147,7 +150,7 @@ FormWebViewTheme resolveFormWebViewTheme(
 }) {
   if (payload == null) {
     return FormWebViewTheme(
-      backgroundColor: Colors.white,
+      backgroundColor: _white,
       activeMode: systemBrightness,
     );
   }
@@ -165,7 +168,7 @@ FormWebViewTheme resolveFormWebViewTheme(
   final themeJson = appearance?['themes']?[activeModeKey]?['theme'];
   final fallback = activeMode == Brightness.dark
       ? const Color(0xFF1a1a1a)
-      : Colors.white;
+      : _white;
 
   return FormWebViewTheme(
     backgroundColor: getBackgroundColor(
@@ -486,7 +489,7 @@ Color resolveModalOverlayBackgroundColor({
   required Brightness activeMode,
   required bool darkOverlay,
 }) {
-  if (!darkOverlay) return Colors.transparent;
+  if (!darkOverlay) return _transparent;
 
   final themes = appearanceProperties?['themes'] as Map<String, dynamic>?;
   final modeKey = activeMode == Brightness.dark ? 'dark' : 'light';

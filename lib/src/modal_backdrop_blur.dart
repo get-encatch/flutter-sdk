@@ -5,7 +5,7 @@ library;
 import 'dart:io';
 import 'dart:ui';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 
 /// expo-blur intensity 52 (iOS) / 72 (Android) — Flutter sigma is visually
 /// stronger than expo intensity, so use ~intensity × 0.065 (not 1:1).
@@ -27,7 +27,7 @@ class ModalBackdropBlur extends StatelessWidget {
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
         // No extra tint layer — RN BlurView tint is part of the native blur only.
-        child: const ColoredBox(color: Colors.transparent),
+        child: const ColoredBox(color: Color(0x00000000)),
       ),
     );
   }

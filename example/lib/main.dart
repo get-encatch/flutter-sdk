@@ -1,4 +1,7 @@
 import 'package:encatch_flutter/encatch_flutter.dart';
+// The example runs on Flutter 3.41 and later, so it stays on the Material
+// library bundled with Flutter; its replacement, `material_ui`, needs 3.44.
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 
 void main() {
