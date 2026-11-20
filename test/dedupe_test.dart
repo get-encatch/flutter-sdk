@@ -159,6 +159,40 @@ void main() {
     expect(screensOf(api), ['/home', '/cart', '/home']);
   });
 
+  testFake('a screen visited again after the root route is tracked again', (
+    async,
+    api,
+  ) {
+    Route<void> route(String? name) => PageRouteBuilder<void>(
+      settings: RouteSettings(name: name),
+      pageBuilder: (_, _, _) => const SizedBox(),
+    );
+    // The usual app: its first screen is MaterialApp's `home`, the route `/`,
+    // which is not tracked.
+    final observer = EncatchNavigatorObserver();
+    final root = route('/');
+    final ops = route('/rp-ops');
+    final dialog = route(null);
+
+    observer.didPush(root, null);
+    async.elapse(const Duration(seconds: 3));
+    observer.didPush(ops, root);
+    async.elapse(const Duration(seconds: 3));
+    // A dialog over it does not count.
+    observer.didPush(dialog, ops);
+    async.elapse(const Duration(seconds: 3));
+    observer.didPop(dialog, ops);
+    async.elapse(const Duration(seconds: 3));
+    observer.didPop(ops, root);
+    async.elapse(const Duration(seconds: 3));
+    observer.didPush(route('/rp-ops'), root);
+    async.elapse(const Duration(seconds: 3));
+    expect(screensOf(api), [
+      '/rp-ops',
+      '/rp-ops',
+    ], reason: 'the second visit, after home, is a visit');
+  });
+
   test('a screen tracked before init is sent once init finishes', () {
     fakeAsync((async) {
       final api = FakeApi();

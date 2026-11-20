@@ -11,7 +11,7 @@ This release changes how much the SDK sends, how it identifies users and when it
 - Survey events reach `Encatch.on` with the form's id. They used to carry an empty id.
 - `stopSession()` now survives an app restart, as documented. An app that relied on the next launch resuming by itself must call `startSession()` or identify a user.
 - Identical calls are sent once: an `identifyUser` identical to the last one, and the same event or screen tracked again within one second.
-- `EncatchNavigatorObserver` tracks a route only when its name changes, so closing a dialog no longer tracks the screen underneath again.
+- `EncatchNavigatorObserver` tracks a route only when its name changes, so closing a dialog no longer tracks the screen underneath again. Going back to the first screen (`/`) counts as a change even though `/` is not tracked, so going home, to A, home and to A again tracks A twice.
 - Visitors no longer send survey events (the server rejected them).
 - The SDK no longer prints to the console. Its messages go through its logger and appear only with `debugMode: true`.
 

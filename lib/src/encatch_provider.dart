@@ -114,9 +114,10 @@ class _EncatchProviderState extends State<EncatchProvider> {
 /// )
 /// ```
 class EncatchNavigatorObserver extends NavigatorObserver {
-  /// The last route name this observer tracked. A route is tracked only when
-  /// its name differs from this, so closing a dialog or another unnamed route
-  /// does not track the screen underneath a second time.
+  /// The last named route this observer saw, tracked or not (`/` is seen but
+  /// not tracked by default). A route is tracked only when its name differs
+  /// from this, so closing a dialog or another unnamed route does not track
+  /// the screen underneath a second time.
   String? _lastTracked;
 
   /// Whether to track the `/` route, the name Flutter gives an app's `home`.
@@ -145,9 +146,14 @@ class EncatchNavigatorObserver extends NavigatorObserver {
 
   void _trackRoute(Route<dynamic> route) {
     final name = route.settings.name;
-    if (name != null && name.isNotEmpty && (trackRootRoute || name != '/')) {
-      if (name == _lastTracked) return;
-      _lastTracked = name;
+    // A dialog or another unnamed route is not a screen: the screen under it
+    // stays the last one.
+    if (name == null || name.isEmpty) return;
+    if (name == _lastTracked) return;
+    // Remembered even when not tracked: going back to `/` and then to the
+    // screen visited before it is a new visit (home, A, home, A tracks A twice).
+    _lastTracked = name;
+    if (trackRootRoute || name != '/') {
       final track = internals.autoTrackScreen;
       if (track != null) {
         track(name);
