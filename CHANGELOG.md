@@ -5,10 +5,14 @@ This release changes how much the SDK sends, how it identifies users and when it
 **New, all optional**
 - `EncatchConfig.onRequest` and `onResponse`: debug hooks that report each request, and each call the SDK decides not to send, with the reason. They never carry the API key, headers, the secure signature or bodies.
 - `EncatchNavigatorObserver(trackRootRoute: true)`: track the `/` route. Off by default; planned to become the default in a later minor release.
+- `EncatchProvider(autoStartVisitorSession: false)`: visitors get no background ping and no automatic screen tracking. The session starts when `identifyUser` succeeds (the current screen is then sent once) or when the app calls `startSession()`, and stops again on `resetUser()`. A user restored at launch starts as usual, and calls the app makes itself are always sent. On by default, as before. With it off, surveys set to show immediately, after a delay or on a page visit cannot reach visitors.
+- `Encatch.isIdentified`: true when the SDK has a confirmed identity, which means the user was restored at launch or their `identifyUser` succeeded. During a switch to another user it stays true until the new user's identify succeeds.
+- `EncatchConfig.persistUserAcrossRestarts`: set it to false to keep the user in memory for the current app run only. Nothing about the user is saved on the device, user data an earlier version saved is deleted at init, and the app identifies on every launch. On by default, as before.
 
 **Behaviour changes to be aware of**
 - Closing a survey with its X before the final submit is now a dismissal, for identified users and visitors alike. The SDK records it and `Encatch.on` listeners receive `EventType.formDismissed`.
 - Survey events reach `Encatch.on` with the form's id. They used to carry an empty id.
+- `resetUser()` no longer stops the background ping. The session carries on as a visitor, ping and automatic screen tracking alike, with no extra ping at the reset. Logged-out visitors can therefore get surveys set to show immediately or after a delay. Set `autoStartVisitorSession` to false for the opposite: no visitor traffic after a sign-out.
 - `stopSession()` now survives an app restart, as documented. An app that relied on the next launch resuming by itself must call `startSession()` or identify a user.
 - Identical calls are sent once: an `identifyUser` identical to the last one, and the same event or screen tracked again within one second.
 - `EncatchNavigatorObserver` tracks a route only when its name changes, so closing a dialog no longer tracks the screen underneath again. Going back to the first screen (`/`) counts as a change even though `/` is not tracked, so going home, to A, home and to A again tracks A twice.

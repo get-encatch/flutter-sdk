@@ -48,10 +48,32 @@ class EncatchProvider extends StatefulWidget {
   /// Optional SDK configuration.
   final EncatchConfig? config;
 
+  /// Whether the session starts by itself for a visitor (a user who is not
+  /// identified). Defaults to true.
+  ///
+  /// - true: every launch starts the background ping and
+  ///   [EncatchNavigatorObserver]'s automatic screen tracking, for visitors
+  ///   too.
+  /// - false: a visitor gets no ping and no automatic screen tracking. The
+  ///   session starts when [Encatch.identifyUser] succeeds (the current screen
+  ///   is then sent once) or when the app calls [Encatch.startSession], and
+  ///   stops again on [Encatch.resetUser]. A user restored from the device at
+  ///   launch starts as usual.
+  ///
+  /// Calls the app makes itself ([Encatch.trackScreen], [Encatch.trackEvent],
+  /// [Encatch.showForm] and submits) are always sent. With false, surveys set
+  /// to show immediately, after a delay or on a page visit cannot reach
+  /// visitors, because they arrive in ping and screen replies.
+  ///
+  /// Read at launch and on [Encatch.resetUser]; a change while the app runs
+  /// applies from then.
+  final bool autoStartVisitorSession;
+
   const EncatchProvider({
     required this.child,
     required this.apiKey,
     this.config,
+    this.autoStartVisitorSession = true,
     super.key,
   });
 
@@ -71,15 +93,22 @@ class _EncatchProviderState extends State<EncatchProvider> {
   Future<void> _initialize() async {
     if (_initStarted) return;
     _initStarted = true;
+    // Before init, so the launch sees it.
+    internals.autoStartVisitorSession = widget.autoStartVisitorSession;
     await Encatch.init(widget.apiKey, config: widget.config);
-    // Start a session for anonymous users immediately after init, mirroring the
-    // React Native SDK behaviour. identifyUser() will start its own session
-    // (with skipImmediatePing + skipImmediateTrackScreen) and take over.
-    // A session the app stopped stays stopped across restarts, until the app
-    // calls Encatch.startSession() or identifies a user.
-    if (!Encatch.isFullScreen && !internals.sessionStopped) {
-      await Encatch.startSession();
-    }
+    // Start the session at launch, for visitors too. identifyUser() starts
+    // its own session (with skipImmediatePing + skipImmediateTrackScreen) and
+    // takes over. Not started when the app stopped the session in an earlier
+    // run (until it calls Encatch.startSession() or identifies a user), or
+    // for a visitor when autoStartVisitorSession is false.
+    await internals.startSessionOnLaunch?.call();
+  }
+
+  @override
+  void didUpdateWidget(EncatchProvider oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Applies from the next resetUser() or launch.
+    internals.autoStartVisitorSession = widget.autoStartVisitorSession;
   }
 
   @override
@@ -158,8 +187,8 @@ class EncatchNavigatorObserver extends NavigatorObserver {
       if (track != null) {
         track(name);
       } else {
-        // Before init: remembered by the SDK and handled once init finishes.
-        Encatch.trackScreen(name).catchError((_) {});
+        // Before init has been called: handled once it has finished.
+        internals.autoScreenBeforeInit = name;
       }
     }
   }

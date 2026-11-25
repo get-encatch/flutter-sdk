@@ -129,6 +129,12 @@ class Encatch {
   static bool _signatureExpired = false;
   static Completer<void>? _identifiedAgain;
 
+  // A confirmed identity: the user was restored at init, or an identify reply
+  // was applied. Cleared by resetUser and clearAll. During a switch to another
+  // user it stays set, for the previous user, until the new user's identify
+  // succeeds.
+  static bool _identityConfirmed = false;
+
   // Preferences
   static String? _locale;
   static String? _country;
@@ -155,6 +161,18 @@ class Encatch {
   // Session control state
   static bool _isSessionPaused = false;
   static bool _isSessionStopped = false;
+
+  // EncatchProvider's autoStartVisitorSession is false and the user is a
+  // visitor whose session has not been started: no ping and no automatic
+  // screens. Set at launch and on resetUser; cleared by any startSession (a
+  // successful identify calls it).
+  static bool _visitorQuiet = false;
+
+  // A session was asked for in this run of the app: startSession() was called
+  // (by the app or by a successful identify) or EncatchProvider's launch start
+  // ran, even when a saved stop held it back. resetUser() keeps the ping
+  // running only then, so it never starts a session that was not meant to run.
+  static bool _sessionRequested = false;
 
   // App info
   static String _appVersion = '1.0.0';
@@ -185,8 +203,10 @@ class Encatch {
   static String? _openFormConfigId;
   static Timer? _pendingAutoShow;
 
-  // A screen tracked before init finished; sent as soon as it has.
+  // A screen tracked before init finished; sent as soon as it has. Whether it
+  // came from the navigator observer rather than the app's own call.
   static String? _screenBeforeInit;
+  static bool _screenBeforeInitIsAutomatic = false;
 
   // The latest identifyUser call made during a 429 pause, sent when it ends.
   static Future<void> Function()? _heldIdentify;
@@ -218,6 +238,18 @@ class Encatch {
   static String? get sessionId => _sessionId;
   static String? get userName => _userName;
   static String? get userId => _userId;
+
+  /// Whether the SDK has a confirmed identity: the user was restored from the
+  /// device at init, or their [identifyUser] succeeded.
+  ///
+  /// False before init has finished, for a visitor, while a new user's first
+  /// identify is pending or after it failed, and after [resetUser] or
+  /// [clearAll]. During a switch to another user it stays true, for the
+  /// previous user, until the new user's identify succeeds. [stopSession] and
+  /// an expired secure signature do not change it.
+  static bool get isIdentified => _initialized && _identityConfirmed;
+
+  static bool get _hasIdentity => _userName != null && _userId != null;
   static bool get debugMode => _debugMode;
 
   // ============================================================================
@@ -231,6 +263,7 @@ class Encatch {
   static Future<void> init(String apiKey, {EncatchConfig? config}) async {
     internals.resetSdkForTest = _resetForTest;
     internals.autoTrackScreen = _trackScreenAutomatically;
+    internals.startSessionOnLaunch = _startSessionOnLaunch;
     _debugMode = config?.debugMode ?? false;
     _logger = EncatchLogger(debugMode: _debugMode);
     internals.sdkLogger = _logger;
@@ -257,6 +290,20 @@ class Encatch {
     _onResponse = config?.onResponse;
 
     _logger.debug('Initializing SDK...');
+
+    // A screen the navigator observer saw before init was called.
+    final earlyScreen = internals.autoScreenBeforeInit;
+    internals.autoScreenBeforeInit = null;
+    if (earlyScreen != null) {
+      _screenBeforeInit = earlyScreen;
+      _screenBeforeInitIsAutomatic = true;
+    }
+
+    // persistUserAcrossRestarts false: the user lives in memory for this run
+    // only, and user data an earlier run saved on the device is deleted.
+    final persistUser = config?.persistUserAcrossRestarts ?? true;
+    setPersistUserAcrossRestarts(persistUser);
+    if (!persistUser) await clearStoredUserData();
 
     // Load persisted identity, app package, and app version in parallel
     final results = await Future.wait([
@@ -289,10 +336,15 @@ class Encatch {
     } else {
       _feedbackTransactions = await getFeedbackTransactions('anonymous');
     }
+    _identityConfirmed = _hasIdentity;
 
     // A session stopped in an earlier run of the app stays stopped.
     _isSessionStopped = await getSessionStopped();
     internals.sessionStopped = _isSessionStopped;
+
+    // EncatchProvider's autoStartVisitorSession false: a visitor stays quiet
+    // until the session is started.
+    _visitorQuiet = !internals.autoStartVisitorSession && !_hasIdentity;
 
     _initialized = true;
 
@@ -302,9 +354,12 @@ class Encatch {
 
     // The first screen is usually pushed before init has finished.
     final screenBeforeInit = _screenBeforeInit;
+    final wasAutomatic = _screenBeforeInitIsAutomatic;
     _screenBeforeInit = null;
+    _screenBeforeInitIsAutomatic = false;
     if (screenBeforeInit != null) {
-      if (_isSessionStopped) {
+      if (_isSessionStopped || (wasAutomatic && _visitorQuiet)) {
+        // Remembered, so startSession() can send it, but not sent.
         _currentScreen = screenBeforeInit;
       } else {
         trackScreen(screenBeforeInit).catchError((_) {});
@@ -466,6 +521,7 @@ class Encatch {
           _userId = res.userId;
           await setUserId(userName, res.userId!);
         }
+        _identityConfirmed = _hasIdentity;
         if (res.feedbackTransactions != null) {
           _feedbackTransactions = res.feedbackTransactions;
           await setFeedbackTransactions(userName, res.feedbackTransactions!);
@@ -480,10 +536,15 @@ class Encatch {
           onPageDelay: (raw['onPageDelay'] as num?)?.toInt(),
           formConfigurationId: res.formConfigurationId,
         );
+        // The session starts without a ping or a screen of its own. The
+        // exception: a visitor whose session was not running
+        // (autoStartVisitorSession false) also sends the current screen,
+        // which was not sent while quiet.
+        final wasVisitorQuiet = _visitorQuiet;
         await startSession(
-          options: const StartSessionOptions(
+          options: StartSessionOptions(
             skipImmediatePing: true,
-            skipImmediateTrackScreen: true,
+            skipImmediateTrackScreen: !wasVisitorQuiet,
           ),
         );
       },
@@ -603,6 +664,7 @@ class Encatch {
     if (!_initialized) {
       // Remembered, and sent once init has finished.
       _screenBeforeInit = screenName;
+      _screenBeforeInitIsAutomatic = false;
       return;
     }
     if (_isFullScreen) return;
@@ -978,6 +1040,8 @@ class Encatch {
     _isSessionStopped = false;
     internals.sessionStopped = false;
     _isSessionPaused = false;
+    _visitorQuiet = false;
+    _sessionRequested = true;
     clearSessionStopped().catchError((_) {});
 
     // Generate a new session ID
@@ -996,6 +1060,23 @@ class Encatch {
     if (options?.skipImmediateTrackScreen != true && _currentScreen != null) {
       await trackScreen(_currentScreen!);
     }
+  }
+
+  /// EncatchProvider's start at launch. Not started while a saved
+  /// stopSession() is in effect, or for a visitor when the provider's
+  /// autoStartVisitorSession is false.
+  static Future<void> _startSessionOnLaunch() async {
+    if (!_initialized) return;
+    _sessionRequested = true;
+    if (_isFullScreen || _isSessionStopped) return;
+    if (_visitorQuiet) {
+      _logger.debug(
+        'Visitor session not started at launch: autoStartVisitorSession is '
+        'false',
+      );
+      return;
+    }
+    await startSession();
   }
 
   /// Temporarily stops the automatic background ping without affecting open forms,
@@ -1056,6 +1137,12 @@ class Encatch {
 
   static Future<void> _doPing() async {
     if (!_initialized || _isFullScreen) return;
+    // A ping already due when the app went quiet (resetUser with
+    // autoStartVisitorSession false) must not go out as a visitor.
+    if (_visitorQuiet) {
+      _reportSkipped('ping', 'visitor');
+      return;
+    }
     if (_isFormVisible) {
       _reportSkipped('ping', 'survey-open');
       return;
@@ -1100,7 +1187,23 @@ class Encatch {
   // ============================================================================
 
   /// Resets the current user's identity and clears persisted data.
-  static Future<void> resetUser() => _serialized(_resetUserNow);
+  ///
+  /// The session carries on as a visitor, under a new session id: the
+  /// background ping keeps its regular interval (no extra ping at the reset)
+  /// and automatic screen tracking continues. A session that never ran in
+  /// this run of the app is not started. A [pauseSession] or [stopSession] is
+  /// cleared.
+  ///
+  /// With [EncatchProvider.autoStartVisitorSession] false the SDK goes quiet
+  /// instead: the ping and automatic screen tracking stop until the next
+  /// successful [identifyUser] or [startSession].
+  static Future<void> resetUser() {
+    // Quiet from this moment, not from when the reset finishes: apps navigate
+    // to their sign-in screen straight after calling this, and that automatic
+    // screen must not go out as a visitor.
+    if (!internals.autoStartVisitorSession) _visitorQuiet = true;
+    return _serialized(_resetUserNow);
+  }
 
   static Future<void> _resetUserNow() async {
     final prevUserName = _userName;
@@ -1134,7 +1237,18 @@ class Encatch {
     internals.sessionStopped = false;
     await clearSessionStopped();
 
-    _stopPingInterval();
+    _identityConfirmed = false;
+    // The session carries on as a visitor: the ping keeps running, as
+    // automatic screen tracking does, on its regular interval and with no
+    // extra ping now. Not when the app goes quiet (autoStartVisitorSession
+    // false), when no session was asked for in this run, or in full-screen
+    // mode.
+    _visitorQuiet = !internals.autoStartVisitorSession;
+    if (!_visitorQuiet && _sessionRequested && !_isFullScreen) {
+      _startPingInterval();
+    } else {
+      _stopPingInterval();
+    }
 
     _logger.debug('User reset. Previous: $prevUserName / $prevUserId');
   }
@@ -1346,6 +1460,8 @@ class Encatch {
       clearSession(),
       clearSessionStopped(),
     ]);
+    // With persistUserAcrossRestarts false, every user kept in memory.
+    clearMemoryUserData();
 
     _userName = null;
     _userId = null;
@@ -1358,6 +1474,11 @@ class Encatch {
     _isSessionPaused = false;
     _isSessionStopped = false;
     internals.sessionStopped = false;
+    _identityConfirmed = false;
+    _sessionRequested = false;
+    // The ping is stopped above. With autoStartVisitorSession false,
+    // automatic screens stop too, as after resetUser().
+    _visitorQuiet = !internals.autoStartVisitorSession;
     _sessionId = await getOrCreateSessionId();
 
     _logger.debug('clearAll: SDK storage wiped and state reset');
@@ -1494,10 +1615,18 @@ class Encatch {
   // Internal: automatic screen tracking (EncatchNavigatorObserver)
   // ============================================================================
 
-  /// A screen reported by the navigator observer. While the session is stopped
-  /// it is remembered, so `startSession()` can send it, but not sent.
+  /// A screen reported by the navigator observer. While the session is
+  /// stopped, or a visitor's session has not been started
+  /// (autoStartVisitorSession false), it is remembered, so `startSession()`
+  /// can send it, but not sent.
   static void _trackScreenAutomatically(String screenName) {
-    if (_isSessionStopped) {
+    if (!_initialized) {
+      // init decides once it knows who the user is.
+      _screenBeforeInit = screenName;
+      _screenBeforeInitIsAutomatic = true;
+      return;
+    }
+    if (_isSessionStopped || _visitorQuiet) {
       _currentScreen = screenName;
       return;
     }
@@ -1599,6 +1728,14 @@ class Encatch {
     _lastTrackedScreen = null;
     _lastTrackedScreenAt = 0;
     _screenBeforeInit = null;
+    _screenBeforeInitIsAutomatic = false;
+    internals.autoScreenBeforeInit = null;
+    internals.autoStartVisitorSession = true;
+    _visitorQuiet = false;
+    _sessionRequested = false;
+    _identityConfirmed = false;
+    setPersistUserAcrossRestarts(true);
+    clearMemoryUserData();
     _cancelPendingAutoShow();
     _loadingFormId = null;
     _openFormRequestedId = null;
@@ -1869,7 +2006,6 @@ class Encatch {
   static void _onRetriesExhausted(String? sentAs) {
     if (sentAs == null || sentAs != _userName) return;
     _logger.debug('User "$sentAs" could not be confirmed; resetting the user');
-    _stopPingInterval();
     resetUser().catchError((_) {});
   }
 }

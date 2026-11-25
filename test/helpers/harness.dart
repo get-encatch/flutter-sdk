@@ -9,6 +9,7 @@ import 'package:encatch_flutter/src/internals.dart' as internals;
 import 'package:encatch_flutter/src/types.dart' show ShowFormPayload;
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -66,6 +67,7 @@ Future<void> startSdk(
   bool keepStorage = false,
   bool isFullScreen = false,
   bool debugMode = false,
+  bool? persistUserAcrossRestarts,
   Future<bool> Function(ShowFormInterceptorPayload payload)? onBeforeShowForm,
   void Function(EncatchRequestInfo info)? onRequest,
   void Function(EncatchResponseInfo info)? onResponse,
@@ -80,6 +82,7 @@ Future<void> startSdk(
       onBeforeShowForm: onBeforeShowForm,
       onRequest: onRequest,
       onResponse: onResponse,
+      persistUserAcrossRestarts: persistUserAcrossRestarts,
     ),
   );
 }
@@ -155,6 +158,119 @@ class FakePresenter {
 
   void dispose() => _sub.cancel();
 }
+
+/// A small app under `EncatchProvider`, with a real navigator watched by an
+/// `EncatchNavigatorObserver`. As in a real app, the navigator pushes the first
+/// screen while the provider's init is still running.
+class TestApp {
+  final navigator = GlobalKey<NavigatorState>();
+  final observer = EncatchNavigatorObserver();
+
+  /// The app's widget tree. Pumping it again with another
+  /// [autoStartVisitorSession] changes the option while the app runs.
+  Widget build({
+    bool? autoStartVisitorSession,
+    bool? persistUserAcrossRestarts,
+    bool isFullScreen = false,
+    String firstScreen = '/login',
+  }) {
+    final config = EncatchConfig(
+      apiBaseUrl: fakeBaseUrl,
+      isFullScreen: isFullScreen,
+      persistUserAcrossRestarts: persistUserAcrossRestarts,
+    );
+    final app = WidgetsApp(
+      color: const Color(0xFF000000),
+      navigatorKey: navigator,
+      navigatorObservers: [observer],
+      initialRoute: firstScreen,
+      onGenerateRoute: (settings) => PageRouteBuilder<void>(
+        settings: settings,
+        pageBuilder: (_, _, _) => const SizedBox(),
+      ),
+    );
+    return autoStartVisitorSession == null
+        ? EncatchProvider(apiKey: defaultApiKey, config: config, child: app)
+        : EncatchProvider(
+            apiKey: defaultApiKey,
+            config: config,
+            autoStartVisitorSession: autoStartVisitorSession,
+            child: app,
+          );
+  }
+
+  /// Launches the app on [firstScreen]. Storage starts as [stored]; pass
+  /// `keepStorage: true` for a restart on what an earlier run saved.
+  Future<void> launch(
+    WidgetTester tester,
+    FakeApi api, {
+    bool? autoStartVisitorSession,
+    bool? persistUserAcrossRestarts,
+    bool isFullScreen = false,
+    Map<String, Object> stored = const {},
+    bool keepStorage = false,
+    String firstScreen = '/login',
+  }) async {
+    await prepareSdk(api, stored: stored, keepStorage: keepStorage);
+    await tester.pumpWidget(
+      build(
+        autoStartVisitorSession: autoStartVisitorSession,
+        persistUserAcrossRestarts: persistUserAcrossRestarts,
+        isFullScreen: isFullScreen,
+        firstScreen: firstScreen,
+      ),
+    );
+    await tester.pump(const Duration(seconds: 2));
+  }
+
+  /// Navigates to [screen] and lets two seconds pass.
+  Future<void> go(WidgetTester tester, String screen) async {
+    navigator.currentState!.pushNamed(screen);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+  }
+
+  /// Stops the SDK and takes the app off the screen. Call at the end of the
+  /// test, so no timer is left running.
+  Future<void> close(WidgetTester tester) async {
+    await stopSdk();
+    await tester.pumpWidget(const SizedBox());
+  }
+}
+
+/// Requests sent as a visitor: without identity headers. identify-user is left
+/// out, as it always carries the name it identifies.
+List<FakeRequest> visitorRequests(FakeApi api, [String? endpoint]) => api
+    .requests
+    .where(
+      (r) =>
+          r.endpoint != 'identify-user' &&
+          (endpoint == null || r.endpoint == endpoint) &&
+          r.userName == null &&
+          r.userId == null,
+    )
+    .toList();
+
+/// Requests sent as [userName], with that user's id.
+List<FakeRequest> requestsAs(
+  FakeApi api,
+  String userName, [
+  String? endpoint,
+]) => api.requests
+    .where(
+      (r) =>
+          r.endpoint != 'identify-user' &&
+          (endpoint == null || r.endpoint == endpoint) &&
+          r.userName == userName &&
+          r.userId == api.expectedUserId(userName),
+    )
+    .toList();
+
+/// What an earlier run saved for an identified [userName].
+Map<String, Object> savedUser(FakeApi api, String userName) => {
+  'encatch_user_name': userName,
+  'encatch_user_id_$userName': api.expectedUserId(userName),
+};
 
 /// A `$deviceInfo` screen name helper for assertions.
 List<String?> screensOf(FakeApi api) =>

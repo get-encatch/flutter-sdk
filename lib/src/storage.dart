@@ -15,6 +15,7 @@ import 'types.dart';
 const _keyDeviceId = 'encatch_device_id';
 const _keyUserName = 'encatch_user_name';
 const _keyUserIdPrefix = 'encatch_user_id_';
+const _keyUserSignaturePrefix = 'encatch_user_signature_';
 const _keyFtPrefix = 'encatch_ft_';
 const _keyPreferences = 'encatch_preferences';
 const _keyRetryQueue = 'encatch_retry_queue';
@@ -63,13 +64,74 @@ Future<void> clearSession() async {
 }
 
 // ============================================================================
+// Where user data lives: the device (default) or memory only
+// (EncatchConfig.persistUserAcrossRestarts false). User data is the user name,
+// user ids, secure signatures and survey history (feedback transactions).
+// ============================================================================
+
+bool _persistUser = true;
+final _memoryUserStore = <String, String>{};
+
+bool _isUserKey(String key) =>
+    key == _keyUserName ||
+    key.startsWith(_keyUserIdPrefix) ||
+    key.startsWith(_keyUserSignaturePrefix) ||
+    key.startsWith(_keyFtPrefix);
+
+/// true saves user data on the device, to be restored at the next launch;
+/// false keeps it in memory for this app run only.
+void setPersistUserAcrossRestarts(bool enabled) {
+  _persistUser = enabled;
+}
+
+/// Forgets the user data kept in memory (persistUserAcrossRestarts false).
+void clearMemoryUserData() => _memoryUserStore.clear();
+
+/// Deletes every piece of user data saved on the device, by an earlier run
+/// with persistUserAcrossRestarts true. The device id, the preferences and a
+/// saved stop stay.
+Future<void> clearStoredUserData() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    for (final key in prefs.getKeys().where(_isUserKey).toList()) {
+      await prefs.remove(key);
+    }
+  } catch (_) {
+    // ignore
+  }
+}
+
+Future<String?> _readUserData(String key) async {
+  if (!_persistUser) return _memoryUserStore[key];
+  final prefs = await SharedPreferences.getInstance();
+  return prefs.getString(key);
+}
+
+Future<void> _writeUserData(String key, String value) async {
+  if (!_persistUser) {
+    _memoryUserStore[key] = value;
+    return;
+  }
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString(key, value);
+}
+
+Future<void> _removeUserData(String key) async {
+  if (!_persistUser) {
+    _memoryUserStore.remove(key);
+    return;
+  }
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.remove(key);
+}
+
+// ============================================================================
 // User Name
 // ============================================================================
 
 Future<String?> getUserName() async {
   try {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyUserName);
+    return await _readUserData(_keyUserName);
   } catch (_) {
     return null;
   }
@@ -77,8 +139,7 @@ Future<String?> getUserName() async {
 
 Future<void> setUserName(String name) async {
   try {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyUserName, name);
+    await _writeUserData(_keyUserName, name);
   } catch (_) {
     // ignore storage failures
   }
@@ -86,8 +147,7 @@ Future<void> setUserName(String name) async {
 
 Future<void> clearUserName() async {
   try {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_keyUserName);
+    await _removeUserData(_keyUserName);
   } catch (_) {
     // ignore
   }
@@ -99,8 +159,7 @@ Future<void> clearUserName() async {
 
 Future<String?> getUserId(String userName) async {
   try {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('$_keyUserIdPrefix$userName');
+    return await _readUserData('$_keyUserIdPrefix$userName');
   } catch (_) {
     return null;
   }
@@ -108,8 +167,7 @@ Future<String?> getUserId(String userName) async {
 
 Future<void> setUserId(String userName, String userId) async {
   try {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('$_keyUserIdPrefix$userName', userId);
+    await _writeUserData('$_keyUserIdPrefix$userName', userId);
   } catch (_) {
     // ignore
   }
@@ -117,8 +175,7 @@ Future<void> setUserId(String userName, String userId) async {
 
 Future<void> clearUserId(String userName) async {
   try {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('$_keyUserIdPrefix$userName');
+    await _removeUserData('$_keyUserIdPrefix$userName');
   } catch (_) {
     // ignore
   }
@@ -128,16 +185,13 @@ Future<void> clearUserId(String userName) async {
 // User signature (secure mode), keyed by userName like the user id
 // ============================================================================
 
-const _keyUserSignaturePrefix = 'encatch_user_signature_';
-
 /// The signature saved after a successful secure identify, with the time it
 /// was signed for keys that have a session time.
 Future<({String signature, String? time})?> getUserSignature(
   String userName,
 ) async {
   try {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('$_keyUserSignaturePrefix$userName');
+    final raw = await _readUserData('$_keyUserSignaturePrefix$userName');
     if (raw == null) return null;
     final map = jsonDecode(raw) as Map<String, dynamic>;
     final signature = map['signature'] as String?;
@@ -154,8 +208,7 @@ Future<void> setUserSignature(
   String? time,
 ) async {
   try {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
+    await _writeUserData(
       '$_keyUserSignaturePrefix$userName',
       jsonEncode({'signature': signature, 'time': ?time}),
     );
@@ -166,8 +219,7 @@ Future<void> setUserSignature(
 
 Future<void> clearUserSignature(String userName) async {
   try {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('$_keyUserSignaturePrefix$userName');
+    await _removeUserData('$_keyUserSignaturePrefix$userName');
   } catch (_) {
     // ignore
   }
@@ -182,8 +234,7 @@ String _ftKey(String identityKey) => '$_keyFtPrefix$identityKey';
 
 Future<String?> getFeedbackTransactions(String identityKey) async {
   try {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_ftKey(identityKey));
+    return await _readUserData(_ftKey(identityKey));
   } catch (_) {
     return null;
   }
@@ -191,8 +242,7 @@ Future<String?> getFeedbackTransactions(String identityKey) async {
 
 Future<void> setFeedbackTransactions(String identityKey, String value) async {
   try {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_ftKey(identityKey), value);
+    await _writeUserData(_ftKey(identityKey), value);
   } catch (_) {
     // ignore
   }
@@ -200,8 +250,7 @@ Future<void> setFeedbackTransactions(String identityKey, String value) async {
 
 Future<void> clearFeedbackTransactions(String identityKey) async {
   try {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_ftKey(identityKey));
+    await _removeUserData(_ftKey(identityKey));
   } catch (_) {
     // ignore
   }

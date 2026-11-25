@@ -32,10 +32,25 @@ EncatchLogger sdkLogger = const EncatchLogger(debugMode: false);
 /// `EncatchProvider`, which then skips its session start at launch.
 bool sessionStopped = false;
 
-/// How `EncatchNavigatorObserver` reports a screen once the SDK is
-/// initialised. While the session is stopped the screen is remembered but not
-/// sent. Null until `Encatch.init` has been called.
+/// How `EncatchNavigatorObserver` reports a screen once `Encatch.init` has
+/// been called. While the session is stopped, or a visitor's session has not
+/// been started (see [autoStartVisitorSession]), the screen is remembered but
+/// not sent. Null until `Encatch.init` has been called.
 void Function(String screenName)? autoTrackScreen;
+
+/// A screen `EncatchNavigatorObserver` saw before `Encatch.init` was called.
+/// `init` takes it and handles it as an automatic screen.
+String? autoScreenBeforeInit;
+
+/// `EncatchProvider.autoStartVisitorSession`. Set by the provider; read by
+/// `Encatch` at launch and on `resetUser()`.
+bool autoStartVisitorSession = true;
+
+/// What `EncatchProvider` calls once `init` has finished: starts the session,
+/// unless a saved stop is in effect or the user is a visitor and
+/// [autoStartVisitorSession] is false. Null until `Encatch.init` has been
+/// called.
+Future<void> Function()? startSessionOnLaunch;
 
 /// Returns the SDK to its pre-`init` state. Registered by `Encatch.init`, so it
 /// is null until the SDK has been initialised once. Tests only.

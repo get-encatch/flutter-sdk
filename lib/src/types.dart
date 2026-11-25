@@ -454,6 +454,21 @@ class EncatchConfig {
   /// signature or response bodies. An error thrown by the hook is ignored.
   final void Function(EncatchResponseInfo info)? onResponse;
 
+  /// Whether the identified user is kept across app restarts. Defaults to
+  /// true.
+  ///
+  /// - true: the user name, the user id and the secure signature are saved on
+  ///   the device and restored at the next launch, so the app does not need to
+  ///   identify again.
+  /// - false: they are kept in memory for the current app run only. Nothing
+  ///   about the user is saved on the device, and user data an earlier run
+  ///   saved is deleted at init. Every launch starts as a visitor, so call
+  ///   [Encatch.identifyUser] on every launch.
+  ///
+  /// The device id, a saved [Encatch.stopSession] and the locale and country
+  /// preferences are saved either way.
+  final bool? persistUserAcrossRestarts;
+
   const EncatchConfig({
     this.apiBaseUrl,
     this.webHost,
@@ -464,6 +479,7 @@ class EncatchConfig {
     this.onBeforeShowForm,
     this.onRequest,
     this.onResponse,
+    this.persistUserAcrossRestarts,
   });
 }
 

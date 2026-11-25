@@ -64,6 +64,25 @@ void main() {
 }
 ```
 
+The provider starts a session at every launch, for visitors too: a background ping, and automatic screen tracking if you use `EncatchNavigatorObserver`. To keep visitors quiet until they sign in, turn that off:
+
+```dart
+EncatchProvider(
+  apiKey: 'your-api-key',
+  autoStartVisitorSession: false,
+  child: MyApp(),
+)
+```
+
+With `autoStartVisitorSession: false`:
+
+- A visitor gets no ping and no automatic screen tracking.
+- The session starts when `identifyUser` succeeds, and the current screen is then sent once. It also starts when your app calls `Encatch.startSession()`.
+- `resetUser()` (sign-out) stops it again.
+- A user restored from the device at launch starts as usual.
+- Calls your app makes itself are always sent: `trackScreen`, `trackEvent`, `showForm` and submits.
+- Surveys set to show immediately, after a delay or on a page visit cannot reach visitors, because they arrive in ping and screen replies. A manual `showForm` and surveys triggered by `trackEvent` still work.
+
 ### 2. Identify users
 
 ```dart
@@ -78,6 +97,14 @@ await Encatch.identifyUser(
 Call `identifyUser` once, after sign-in. Calling it again with the same user, traits, locale, country and signature sends nothing.
 
 Tracking calls made straight after `identifyUser`, without awaiting it, are queued behind it and sent as that user. For a user the device hasn't seen before, anything else sent before the identify reply arrives (a ping, say) goes out as a visitor.
+
+`Encatch.isIdentified` tells you whether the SDK has a confirmed identity:
+
+- **true:** the user was restored from the device at launch, or their `identifyUser` succeeded.
+- **false:** before init has finished, for a visitor, while a new user's first identify is pending or after it failed, and after `resetUser()` or `clearAll()`.
+- **During a switch to another user:** it stays true, for the previous user, until the new user's identify succeeds.
+
+By default the user is saved on the device and restored at the next launch. To keep the user in memory only, see `persistUserAcrossRestarts` under [Configuration](#configuration).
 
 #### Secure mode
 
@@ -99,7 +126,7 @@ await Encatch.identifyUser(
 - **Signature:** hex HMAC-SHA256, computed with the key's secret, of the user name. For a key with a session time, of the user name followed by the time.
 - **Time:** epoch milliseconds, as a string. Pass exactly the value your backend signed.
 - **Never put the secret in the app.** Sign on your server.
-- After a successful identify the SDK sends the signature with every request for that user, and keeps it across app restarts.
+- After a successful identify the SDK sends the signature with every request for that user, and keeps it across app restarts (unless `persistUserAcrossRestarts` is false).
 - **Keys with a session time:** identify with a fresh signature on every app launch. When a signature expires the SDK logs one warning and stops tracking until the app identifies again; a survey being submitted at that moment is sent after that identify.
 
 ### 3. Track events
@@ -182,6 +209,8 @@ While stopped, calls your app makes itself still go out (`trackScreen`, `trackEv
 
 `pauseSession()` and `resumeSession()` stop and restart the ping only, and are not saved.
 
+`resetUser()` (sign-out) does not stop the session. It carries on as a visitor under a new session id: the ping keeps its regular interval and automatic screen tracking continues. With `autoStartVisitorSession: false` the SDK goes quiet instead, until the next sign-in.
+
 ## Configuration
 
 ```dart
@@ -193,10 +222,24 @@ EncatchProvider(
     isFullScreen: false,
     apiBaseUrl: 'https://api.encatch.com',
     webHost: 'https://form.encatch.com',
+    persistUserAcrossRestarts: true,
   ),
   child: MyApp(),
 )
 ```
+
+`persistUserAcrossRestarts` (default `true`) decides whether the identified user is kept across app restarts:
+
+| | `true` (default) | `false` |
+|---|---|---|
+| User name, user id, secure signature | Saved on the device, restored at launch | Kept in memory for this app run only |
+| At the next launch | Restored as that user | A visitor until the app identifies |
+| `Encatch.isIdentified` at launch | `true` | `false` until an identify succeeds |
+| Call `identifyUser` on every launch | Not needed | Needed |
+
+With `false`, user data an earlier version of your app saved is deleted at init. The device id, a saved `stopSession()` and the locale and country preferences are saved either way.
+
+Together with `autoStartVisitorSession: false`, nothing is sent at launch until the app identifies the user.
 
 ### Debug hooks
 
