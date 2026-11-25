@@ -1,4 +1,4 @@
-## 1.2.0
+## 1.2.0-beta.1
 
 This release changes how much the SDK sends, how it identifies users and when it shows surveys. No existing method, parameter or type has changed; everything new is optional.
 

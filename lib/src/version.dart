@@ -4,4 +4,4 @@
 /// differ (test/guards_test.dart).
 library;
 
-const sdkVersion = '1.1.2';
+const sdkVersion = '1.2.0-beta.1';
