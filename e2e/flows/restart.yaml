@@ -1,0 +1,19 @@
+# Closes the app and opens it again with its saved data, as a user reopening
+# it would, and stops on the login screen.
+#   PERSIST_USER no to turn off the config's persistUserAcrossRestarts again
+#   (the test app's set-up screen is shown at every launch)
+appId: com.encatch.fluttere2e
+---
+- stopApp
+- launchApp:
+    clearState: false
+- runFlow:
+    when:
+      true: ${PERSIST_USER == 'no'}
+    commands:
+      - tapOn:
+          id: "setup-persist-user"
+- tapOn:
+    id: "setup-start"
+- assertVisible:
+    id: "login-button"

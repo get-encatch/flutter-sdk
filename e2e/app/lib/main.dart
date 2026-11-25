@@ -40,6 +40,8 @@ class E2eConfig {
     required this.collector,
     required this.formId,
     required this.trackRoot,
+    required this.autoStartVisitor,
+    required this.persistUser,
   });
   final String env; // 'mock' or 'dev'
   final String apiBase;
@@ -58,10 +60,22 @@ class E2eConfig {
   /// like the SDK.
   final bool trackRoot;
 
+  /// Passed to `EncatchProvider(autoStartVisitorSession:)`. On by default,
+  /// like the SDK.
+  final bool autoStartVisitor;
+
+  /// Passed to `EncatchConfig(persistUserAcrossRestarts:)`. On by default,
+  /// like the SDK.
+  final bool persistUser;
+
   bool get isMock => env == 'mock';
 }
 
 late E2eConfig config;
+
+/// How many times the login screen's "Track a screen myself" was tapped. Each
+/// tap tracks a different screen name, so a run can tell them apart.
+int ownScreens = 0;
 
 /// Lines shown at the bottom of every screen, newest first.
 final log = ValueNotifier<List<String>>([]);
@@ -145,10 +159,12 @@ class _E2eAppState extends State<E2eApp> {
     }
     return EncatchProvider(
       apiKey: config.apiKey,
+      autoStartVisitorSession: config.autoStartVisitor,
       config: EncatchConfig(
         apiBaseUrl: config.apiBase,
         webHost: config.webHost,
         debugMode: true,
+        persistUserAcrossRestarts: config.persistUser,
         onBeforeShowForm: (payload) async {
           report('beforeShowForm', {
             'formId': payload.formId,
@@ -205,6 +221,8 @@ class _SetupScreenState extends State<SetupScreen> {
   final _formId = TextEditingController(text: _formIdDefault);
   bool _sessionTime = _sessionTimeDefault;
   bool _trackRoot = false;
+  bool _autoStartVisitor = true;
+  bool _persistUser = true;
 
   static String _defaultApiBase(String env) => _apiBaseDefault.isNotEmpty
       ? _apiBaseDefault
@@ -282,9 +300,28 @@ class _SetupScreenState extends State<SetupScreen> {
           tid(
             'setup-track-root',
             SwitchListTile(
+              dense: true,
               title: const Text('Track the "/" route'),
               value: _trackRoot,
               onChanged: (v) => setState(() => _trackRoot = v),
+            ),
+          ),
+          tid(
+            'setup-auto-start-visitor',
+            SwitchListTile(
+              dense: true,
+              title: const Text('Auto-start visitor session'),
+              value: _autoStartVisitor,
+              onChanged: (v) => setState(() => _autoStartVisitor = v),
+            ),
+          ),
+          tid(
+            'setup-persist-user',
+            SwitchListTile(
+              dense: true,
+              title: const Text('Keep the user after an app restart'),
+              value: _persistUser,
+              onChanged: (v) => setState(() => _persistUser = v),
             ),
           ),
           const SizedBox(height: 12),
@@ -302,6 +339,8 @@ class _SetupScreenState extends State<SetupScreen> {
                     : _localMock,
                 formId: _formId.text.trim(),
                 trackRoot: _trackRoot,
+                autoStartVisitor: _autoStartVisitor,
+                persistUser: _persistUser,
               ),
             );
           }),
@@ -404,6 +443,23 @@ class _LoginScreenState extends State<LoginScreen> {
             note('visitor');
             Navigator.of(context).pushReplacementNamed('/home');
           }),
+          tid('login-identified', Text('identified: ${Encatch.isIdentified}')),
+          // Read on a tap, not at build: init is still running when this
+          // screen is first built.
+          button('login-status', 'Report status', () {
+            report('status', {
+              'userName': Encatch.userName ?? '',
+              'userId': Encatch.userId ?? '',
+              'identified': Encatch.isIdentified,
+            });
+            setState(() {});
+          }),
+          // The app's own call, which is sent whatever the session is doing.
+          button('track-own-screen', 'Track a screen myself', () {
+            ownScreens++;
+            Encatch.trackScreen('/own-$ownScreens');
+            note('own screen /own-$ownScreens');
+          }),
           const LogPanel(),
         ],
       ),
@@ -476,6 +532,7 @@ class _HomeTabState extends State<HomeTab> {
           report('status', {
             'userName': Encatch.userName ?? '',
             'userId': Encatch.userId ?? '',
+            'identified': Encatch.isIdentified,
           });
           setState(() {});
         }),

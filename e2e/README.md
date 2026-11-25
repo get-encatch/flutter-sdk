@@ -41,6 +41,10 @@ Build and install the app first (`flutter build apk --release` in `e2e/app`, or 
 | M8 | Mock | The inline form shows in its slot; the X is a dismissal; it shows again |
 | M9 | Mock | `trackRootRoute`: a route named `/` is tracked only when the option is on |
 | M10 | Mock | Log out, then log in as another user: every later request carries the new user's name and id |
+| M11 | Mock | `autoStartVisitorSession` off: no ping and no automatic screen as a visitor, before sign-in and after sign-out; the current screen is sent at sign-in |
+| M12 | Mock | After a sign-out the session carries on as a visitor: the login screen is tracked and the ping comes on its interval, not at the sign-out |
+| M13 | Mock | The app is closed and reopened: the identified user is restored (the default) |
+| M14 | Mock | The same with `persistUserAcrossRestarts` off: a visitor again, nothing carries a user name or id |
 | D1–D5 | DEV | Manual, page-visit, tracked-event, immediate and delayed triggers: the right form shows, events carry its id, the X is a dismissal |
 | D6–D7 | DEV | The same for a visitor (manual, page visit): the X sends dismiss-form and no survey event |
 | D8–D11 | DEV | Secure identify: valid and wrong signature, with and without a session time |

@@ -130,6 +130,8 @@ const open = (env) =>
     SESSION: 'no',
     SIGNATURE: 'none',
     TRACK_ROOT: 'no',
+    VISITOR_AUTOSTART: 'yes',
+    PERSIST_USER: 'yes',
     ...env,
   });
 const openMock = (identity = 'login') => open({ ENV: 'mock', IDENTITY: identity });
@@ -411,6 +413,134 @@ flows.M10 = {
     c.eq('401s', await count(undefined, 401), 0);
   },
 };
+
+const userOf = (r) => header(r, 'x-user-name');
+const idOf = (r) => header(r, 'x-user-id');
+/** Sent as a visitor: neither identity header. identify-user is left out. */
+const isVisitor = (r) => r.endpoint !== 'identify-user' && !userOf(r) && !idOf(r);
+const isIdentified = (r) => r.endpoint !== 'identify-user' && !!userOf(r) && !!idOf(r);
+const screenOf = (r) => r.body?.$deviceInfo?.$urlOrScreenName;
+const brief = (list) => list.map((r) => `${r.endpoint}${r.endpoint === 'track-screen' ? ` ${screenOf(r)}` : ''}`).join(', ');
+
+flows.M11 = {
+  title: 'autoStartVisitorSession off: quiet as a visitor, before sign-in and after sign-out',
+  async run(c) {
+    await mock('/__mock/reset', 'POST');
+    open({ IDENTITY: 'stay', VISITOR_AUTOSTART: 'no' });
+    await sleep(6000);
+    tap('track-own-screen'); // the app's own call: /own-1
+    await sleep(2000);
+    tap('login-button');
+    flow('expect', { TEXT: 'Log out', TIMEOUT: 15000 });
+    await sleep(36000); // longer than the 30 s ping interval
+    tap('logout');
+    await sleep(14000);
+    tap('track-own-screen'); // a marker: /own-2
+    await sleep(3000);
+
+    const all = await requests();
+    const identifies = all.filter((r) => r.endpoint === 'identify-user');
+    c.eq('identify requests', identifies.map((r) => r.status), [200]);
+    c.eq('pings sent as a visitor', all.filter((r) => r.endpoint === 'ping' && isVisitor(r)).length, 0);
+    c.eq(
+      "screens sent as a visitor: only the app's own calls",
+      all.filter((r) => r.endpoint === 'track-screen' && isVisitor(r)).map(screenOf),
+      ['/own-1', '/own-2'],
+    );
+    const identify = identifies[0];
+    if (!identify) return;
+    const signedIn = all.filter(isIdentified);
+    const screens = signedIn.filter((r) => r.endpoint === 'track-screen');
+    c.ok(
+      'a screen sent as the user within 3 s of the identify',
+      screens.some((r) => r.at - identify.at <= 3000),
+      JSON.stringify(screens.map((r) => [screenOf(r), r.at - identify.at])),
+    );
+    c.ok('the home screen was tracked as the user', screens.some((r) => screenOf(r) === '/home'), brief(screens));
+    c.ok('at least one ping as the user', signedIn.some((r) => r.endpoint === 'ping'), brief(signedIn));
+    c.ok('every request of the user carries that one name', signedIn.every((r) => userOf(r) === userOf(identify)));
+    const marker = all.findLastIndex((r) => screenOf(r) === '/own-2');
+    c.eq('requests after the marker', brief(all.slice(marker + 1)), '');
+    const lastAsUser = all.findLastIndex(isIdentified);
+    c.eq('requests between the sign-out and the marker', brief(all.slice(lastAsUser + 1, marker)), '');
+    c.eq('failed requests', all.filter((r) => r.status >= 400).length, 0);
+    const skipped = (await hookCalls()).filter((h) => h.endpoint === 'ping' && h.reason === 'visitor');
+    c.note(`pings the SDK held back as a visitor, per the hooks: ${skipped.length}`);
+  },
+};
+
+flows.M12 = {
+  title: 'After a sign-out the session carries on as a visitor: ping and screens',
+  async run(c) {
+    await mock('/__mock/reset', 'POST');
+    openMock();
+    await sleep(4000);
+    tap('logout');
+    flow('expect', { TEXT: 'Log in', TIMEOUT: 15000 });
+    await sleep(38000); // longer than the 30 s ping interval
+    tap('track-own-screen'); // a marker: /own-1
+    await sleep(3000);
+
+    const all = await requests();
+    c.eq('identify requests', all.filter((r) => r.endpoint === 'identify-user').map((r) => r.status), [200]);
+    const lastAsUser = all.findLastIndex(isIdentified);
+    const after = all.slice(lastAsUser + 1);
+    c.ok('requests were sent as the user before the sign-out', lastAsUser >= 0);
+    c.ok('everything after the sign-out is sent as a visitor', after.every(isVisitor), brief(after.filter((r) => !isVisitor(r))));
+    const login = after.find((r) => r.endpoint === 'track-screen' && screenOf(r) === '/login');
+    c.ok('the login screen is tracked as a visitor', !!login, brief(after));
+    const pings = after.filter((r) => r.endpoint === 'ping');
+    c.ok('at least one ping as a visitor', pings.length >= 1, brief(after));
+    if (login && pings.length) {
+      const first = pings[0].at - login.at;
+      c.ok('no ping at the sign-out itself: the first comes on the interval', first >= 20000, `${first} ms after the login screen`);
+    }
+    const sessions = new Set(after.map((r) => header(r, 'x-session-id')));
+    const before = new Set(all.slice(0, lastAsUser + 1).map((r) => header(r, 'x-session-id')));
+    c.ok('the visitor has a session id of its own', sessions.size === 1 && ![...sessions].some((s) => before.has(s)), JSON.stringify([...sessions]));
+    c.eq('failed requests', all.filter((r) => r.status >= 400).length, 0);
+  },
+};
+
+/** Identify, close the app, open it again on its saved data. */
+function restartFlow(title, persist) {
+  return {
+    title,
+    async run(c) {
+      await mock('/__mock/reset', 'POST');
+      open({ PERSIST_USER: persist ? 'yes' : 'no' });
+      await sleep(3000);
+      const firstLaunch = await requests();
+      const restartedAt = Date.now();
+      flow('restart', { PERSIST_USER: persist ? 'yes' : 'no' });
+      await sleep(5000);
+      tap('login-status');
+      await sleep(2000);
+
+      const all = await requests();
+      const identifies = all.filter((r) => r.endpoint === 'identify-user');
+      c.eq('identify requests in all', identifies.map((r) => r.status), [200]);
+      const user = userOf(identifies[0] ?? { headers: {} });
+      c.ok('requests as the user before the restart', firstLaunch.some((r) => isIdentified(r) && userOf(r) === user), brief(firstLaunch));
+      const secondLaunch = all.slice(firstLaunch.length);
+      c.ok('requests after the restart', secondLaunch.length >= 1, `${secondLaunch.length}`);
+      const status = (await reports()).filter((h) => h.kind === 'status' && h.receivedAt >= restartedAt).at(-1);
+      if (persist) {
+        c.ok('after the restart every request is sent as the same user', secondLaunch.every((r) => isIdentified(r) && userOf(r) === user), brief(secondLaunch.filter((r) => !isIdentified(r))));
+        c.eq('one user id before and after', [...new Set(all.filter(isIdentified).map(idOf))].length, 1);
+        c.eq('isIdentified after the restart', status?.identified, true);
+        c.eq('the user name after the restart', status?.userName, user);
+      } else {
+        c.ok('after the restart nothing carries a user name or id', secondLaunch.every((r) => !userOf(r) && !idOf(r)), brief(secondLaunch.filter((r) => userOf(r) || idOf(r))));
+        c.eq('isIdentified after the restart', status?.identified, false);
+        c.eq('the user name after the restart', status?.userName, '');
+      }
+      c.eq('failed requests', all.filter((r) => r.status >= 400).length, 0);
+    },
+  };
+}
+flows.M13 = restartFlow('Restart: the identified user is restored (the default)', true);
+flows.M14 = restartFlow('Restart with persistUserAcrossRestarts off: a visitor again', false);
 
 // ---------------------------------------------------------------------------
 // DEV flows: real triggers, real forms, real gateway. No bursts.

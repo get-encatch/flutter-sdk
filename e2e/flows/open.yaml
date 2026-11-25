@@ -1,11 +1,13 @@
 # Starts the app from clean and goes in.
 #   ENV       mock | dev
-#   IDENTITY  login | visitor
+#   IDENTITY  login | visitor | stay (stay on the login screen)
 #   API_KEY, FORM_ID   only for dev
 #   SECRET    a secure test key's secret (dev, optional)
 #   SESSION   yes when that key has a session time
 #   SIGNATURE none | valid | wrong
 #   TRACK_ROOT yes to turn on the navigator observer's trackRootRoute
+#   VISITOR_AUTOSTART no to turn off the provider's autoStartVisitorSession
+#   PERSIST_USER no to turn off the config's persistUserAcrossRestarts
 # The runner passes every one of these on each call. Defaults are not set
 # here: a default in the flow file wins over a value passed on the command line.
 appId: com.encatch.fluttere2e
@@ -52,6 +54,18 @@ appId: com.encatch.fluttere2e
     commands:
       - tapOn:
           id: "setup-track-root"
+- runFlow:
+    when:
+      true: ${VISITOR_AUTOSTART == 'no'}
+    commands:
+      - tapOn:
+          id: "setup-auto-start-visitor"
+- runFlow:
+    when:
+      true: ${PERSIST_USER == 'no'}
+    commands:
+      - tapOn:
+          id: "setup-persist-user"
 - tapOn:
     id: "setup-start"
 - runFlow:
@@ -68,5 +82,15 @@ appId: com.encatch.fluttere2e
           id: "sig-${SIGNATURE}"
       - tapOn:
           id: "login-button"
-- assertVisible:
-    id: "tab-home"
+- runFlow:
+    when:
+      true: ${IDENTITY == 'stay'}
+    commands:
+      - assertVisible:
+          id: "login-button"
+- runFlow:
+    when:
+      true: ${IDENTITY != 'stay'}
+    commands:
+      - assertVisible:
+          id: "tab-home"
