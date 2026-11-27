@@ -2,6 +2,8 @@
 /// Direct translation of types.ts from the React Native SDK.
 library;
 
+import 'dart:async';
+
 // ============================================================================
 // Enums
 // ============================================================================
@@ -469,6 +471,24 @@ class EncatchConfig {
   /// preferences are saved either way.
   final bool? persistUserAcrossRestarts;
 
+  /// Called when the current user's secure-identify signature has expired, so
+  /// the app can get a fresh signature from its own server and call
+  /// [Encatch.identifyUser] again with it.
+  ///
+  /// - Called once per user until an identify for that user succeeds, so a
+  ///   signature that keeps being rejected does not cause a loop.
+  /// - Called after the SDK has handled the reply, so an
+  ///   [Encatch.identifyUser] made from the callback starts from the new
+  ///   state. Not called if [Encatch.resetUser], [Encatch.clearAll] or
+  ///   [Encatch.stop] ran, or another user was identified, meanwhile.
+  /// - An error thrown by the callback, or a Future it returns that fails, is
+  ///   ignored.
+  /// - Never called for a visitor.
+  ///
+  /// The SDK only learns of the expiry when the server checks the signature:
+  /// today on [Encatch.identifyUser] and [Encatch.setUserProperties].
+  final FutureOr<void> Function(SignatureExpiredInfo info)? onSignatureExpired;
+
   const EncatchConfig({
     this.apiBaseUrl,
     this.webHost,
@@ -480,7 +500,16 @@ class EncatchConfig {
     this.onRequest,
     this.onResponse,
     this.persistUserAcrossRestarts,
+    this.onSignatureExpired,
   });
+}
+
+/// What [EncatchConfig.onSignatureExpired] receives.
+class SignatureExpiredInfo {
+  /// The user whose secure signature has expired.
+  final String userName;
+
+  const SignatureExpiredInfo({required this.userName});
 }
 
 /// What [EncatchConfig.onRequest] receives: a request the SDK is about to send.

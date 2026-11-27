@@ -193,6 +193,10 @@ class Scenario {
   /// SV8: check the signature on every request, not only identify-user.
   bool enforceSignatureOnAllRequests = false;
 
+  /// The gateway since 2026-11-27: a 401 for an expired signature carries
+  /// `"reason": "user_signature_expired"`. False models an older gateway.
+  bool expiredSignatureReason = true;
+
   List<Fault> faults = [];
 }
 
@@ -266,10 +270,15 @@ class FakeApi {
   );
 
   /// What a customer's backend would return for secure identify.
-  ({String signature, String? time}) sign(String userName, String apiKey) {
+  /// [age] signs a time that far in the past (an already-expired signature).
+  ({String signature, String? time}) sign(
+    String userName,
+    String apiKey, {
+    Duration age = Duration.zero,
+  }) {
     final key = scenario.apiKeys[apiKey]!;
     if (key.sessionTimeMinutes > 0) {
-      final time = '$_now';
+      final time = '${_now - age.inMilliseconds}';
       return (signature: hmacHex('$userName$time', key.secret!), time: time);
     }
     return (signature: hmacHex(userName, key.secret!), time: null);
@@ -403,9 +412,14 @@ class FakeApi {
 
     if (r.endpoint == 'identify-user' ||
         (scenario.enforceSignatureOnAllRequests && key.secret != null)) {
-      if (signatureResult(r.headers, key) != 'ok') {
-        return _reject(401, 'invalid api key');
+      final result = signatureResult(r.headers, key);
+      if (result == 'expired' && scenario.expiredSignatureReason) {
+        return _Reply(401, {
+          'error': 'invalid api key',
+          'reason': 'user_signature_expired',
+        });
       }
+      if (result != 'ok') return _reject(401, 'invalid api key');
     }
     return _rateLimit(r);
   }
@@ -429,10 +443,14 @@ class FakeApi {
       }
       if (signature != hmacHex(data, key.secret!)) return 'invalid-signature';
     }
-    if (expiry <= 0) return 'ok';
+    // The session time is part of the signature: a key without a secret has
+    // none to expire.
+    if (expiry <= 0 || key.secret == null) return 'ok';
     if (timestamp == null) return 'missing-timestamp';
-    final ts = int.tryParse(timestamp);
-    if (ts == null) return 'invalid-timestamp';
+    // Exactly 13 digits (epoch ms), at most 5 minutes ahead.
+    if (!RegExp(r'^\d{13}$').hasMatch(timestamp)) return 'invalid-timestamp';
+    final ts = int.parse(timestamp);
+    if (ts > _now + 5 * 60000) return 'invalid-timestamp';
     final ageMinutes = (_now - ts) ~/ 60000;
     return ageMinutes > expiry ? 'expired' : 'ok';
   }

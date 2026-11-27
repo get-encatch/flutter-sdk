@@ -31,6 +31,9 @@ import 'version.dart';
 /// submit-form attempts in all when the API answers 429.
 const _submitAttemptsOn429 = 3;
 
+/// Survey submits kept while a secure signature is expired.
+const _maxHeldSubmits = 10;
+
 /// Identical trackEvent / trackScreen calls closer together than this are sent
 /// once.
 const _collapseWindowMs = 1000;
@@ -189,11 +192,23 @@ class Encatch {
   static String? _userSignature;
 
   // Secure mode. The time the stored signature was signed for (keys with a
-  // session time); whether that signature has expired; and what is waiting for
-  // the next successful identify.
+  // session time); whether that signature has expired; the survey submits
+  // held until the next successful identify; the app's onSignatureExpired;
+  // and the user it was last called for (not again for them until an
+  // identify for them succeeds).
   static String? _userSignatureTime;
   static bool _signatureExpired = false;
-  static Completer<void>? _identifiedAgain;
+  static final List<({String user, SubmitFormRequest params})> _heldSubmits =
+      [];
+  static FutureOr<void> Function(SignatureExpiredInfo info)?
+  _onSignatureExpiredHook;
+  static String? _expiryNotifiedFor;
+
+  // The user the app last asked for: set when identifyUser() is called,
+  // cleared when resetUser() or clearAll() is called. _userName changes only
+  // when the identity chain gets to the call; a reply for a user the app has
+  // already moved away from must not tell the app their signature expired.
+  static String? _requestedUser;
 
   // A confirmed identity: the user was restored at init, or an identify reply
   // was applied. Cleared by resetUser and clearAll. During a switch to another
@@ -383,6 +398,7 @@ class Encatch {
     _onBeforeShowForm = config?.onBeforeShowForm;
     _onRequest = config?.onRequest;
     _onResponse = config?.onResponse;
+    _onSignatureExpiredHook = config?.onSignatureExpired;
 
     _logger.debug('Initializing SDK...');
 
@@ -423,6 +439,7 @@ class Encatch {
 
     if (storedName != null) {
       _userName = storedName;
+      _requestedUser = storedName;
       _userId = await getUserId(storedName);
       final signed = await getUserSignature(storedName);
       _userSignature = signed?.signature;
@@ -502,6 +519,7 @@ class Encatch {
       );
       return;
     }
+    _requestedUser = userName;
 
     return _serialized(() async {
       // Decided in the identity chain, after earlier identity calls: a
@@ -614,9 +632,12 @@ class Encatch {
     // identify succeeds.
     if (previousUser != userName) _confirmedName = null;
     if (previousUser != null && previousUser != userName) {
-      // A user switch: the previous user's signature goes with them.
+      // A user switch: the previous user's signature goes with them, and so
+      // do an expired state and the submits held for it.
       _userSignature = null;
       _userSignatureTime = null;
+      _signatureExpired = false;
+      _dropHeldSubmits('another user was identified');
       await clearUserSignature(previousUser);
     }
     if (secure == null) {
@@ -684,9 +705,7 @@ class Encatch {
           );
         }
         _signatureExpired = false;
-        final waiting = _identifiedAgain;
-        _identifiedAgain = null;
-        waiting?.complete();
+        _expiryNotifiedFor = null;
         if (res.userId != null) {
           _userId = res.userId;
           await setUserId(userName, res.userId!);
@@ -694,6 +713,7 @@ class Encatch {
         _identityConfirmed = _hasIdentity;
         if (_identityConfirmed && _userName == userName) {
           _confirmedName = userName;
+          _sendHeldSubmits(userName);
         }
         if (res.feedbackTransactions != null) {
           _feedbackTransactions = res.feedbackTransactions;
@@ -1448,6 +1468,18 @@ class Encatch {
   static Future<void> submitForm(SubmitFormRequest params) async {
     if (!_initialized) return;
 
+    // After a secure signature has expired the answers are held in memory
+    // until the app identifies again, then sent.
+    if (_signatureExpired) {
+      _holdSubmit(params);
+      return;
+    }
+
+    // A signed-in user's answers: if another user is identified, or the user
+    // is reset, while this waits (a 429 pause), they are dropped rather than
+    // sent as someone else. A visitor who signs in meanwhile is the same
+    // person, so a visitor's answers are still sent.
+    final user = _userName;
     final deviceInfo = await _buildDeviceInfo();
     final body = params.toJson();
     body[r'$deviceInfo'] = deviceInfo.toJson();
@@ -1455,13 +1487,15 @@ class Encatch {
 
     // A submit carries the user's answers, so it is never dropped for a 429:
     // it waits for the pause to end and is tried up to three times.
-    // After a secure signature has expired it is held until the app has
-    // identified again, then sent.
     late final SubmitFormResponse res;
-    var heldForSignature = false;
     for (var attempt = 1; ; attempt++) {
-      await _untilSignatureIsFresh();
       await rate.waitUntilResumed(rate.Bucket.submitForm);
+      if (user != null && _userName != user) {
+        _logger.warn(
+          'A survey submit was dropped: the user changed while it waited.',
+        );
+        return;
+      }
       try {
         res = await _post<SubmitFormResponse>(
           _endpoints['submitForm']!,
@@ -1471,9 +1505,9 @@ class Encatch {
         );
         break;
       } on EncatchHttpException catch (e) {
-        if (e.status == 401 && _signatureExpired && !heldForSignature) {
-          heldForSignature = true;
-          continue;
+        if (e.status == 401 && _signatureExpired && _userName == user) {
+          _holdSubmit(params);
+          return;
         }
         if (e.status != 429 || attempt >= _submitAttemptsOn429) rethrow;
       }
@@ -1679,6 +1713,7 @@ class Encatch {
     // to their sign-in screen straight after calling this, and that automatic
     // screen must not go out as a visitor.
     if (!internals.autoStartVisitorSession) _visitorQuiet = true;
+    _requestedUser = null;
     return _serialized(_resetUserNow);
   }
 
@@ -1706,6 +1741,8 @@ class Encatch {
     _userSignature = null;
     _userSignatureTime = null;
     _signatureExpired = false;
+    _expiryNotifiedFor = null;
+    _dropHeldSubmits('the user was reset');
     _feedbackTransactions = null;
     _locale = null;
     _country = null;
@@ -1925,6 +1962,7 @@ class Encatch {
     // updates were for the user being cleared. Ended now, so updates made
     // after it are not caught by it.
     _endWaits();
+    _requestedUser = null;
     return _serialized(_clearAllNow);
   }
 
@@ -1959,6 +1997,8 @@ class Encatch {
     _userSignature = null;
     _userSignatureTime = null;
     _signatureExpired = false;
+    _expiryNotifiedFor = null;
+    _dropHeldSubmits('clearAll() was called');
     _feedbackTransactions = null;
     _locale = null;
     _country = null;
@@ -2248,7 +2288,10 @@ class Encatch {
     _identityLock = Future<void>.value();
     _userSignatureTime = null;
     _signatureExpired = false;
-    _identifiedAgain = null;
+    _heldSubmits.clear();
+    _expiryNotifiedFor = null;
+    _requestedUser = null;
+    _onSignatureExpiredHook = null;
     await clearSession();
 
     _initialized = false;
@@ -2457,17 +2500,12 @@ class Encatch {
       if (response.statusCode == 429) {
         rate.pauseFor(rate.bucketOf(endpoint), retryAfterMs);
       }
-      // A 401 on a request that carried the stored timed signature: it has
-      // expired. identify-user carries the signature that call was given, so
-      // only setUserProperties' identify-user (the stored one) counts, and
-      // only while that user is current.
-      if (response.statusCode == 401 &&
-          (identifyAs == null ||
-              (storedSignature && identifyAs == _userName)) &&
-          headers.containsKey('X-User-Session-Time')) {
-        _onSignatureExpired(
-          headers['X-User-Name'],
-          headers['X-User-Signature'],
+      if (response.statusCode == 401) {
+        _checkSignatureExpiry(
+          response.body,
+          headers,
+          identifyAs: identifyAs,
+          storedSignature: storedSignature,
         );
       }
       throw EncatchHttpException(
@@ -2486,36 +2524,161 @@ class Encatch {
     return fromJson(decoded);
   }
 
+  /// A 401: did the user's secure signature expire? Only a 401 the gateway
+  /// marks with `"reason": "user_signature_expired"` counts, or, on older
+  /// gateways without the reason, a 401 on setUserProperties' identify-user
+  /// carrying the stored timed signature. Any other 401 (inactive key, wrong
+  /// referer, wrong signature) is not an expiry.
+  ///
+  /// - A reply for a user who has since been reset or switched away from is
+  ///   ignored.
+  /// - The app's own new signature (identifyUser with `secure`) rejected as
+  ///   expired: the app is told, nothing else changes. That identify failed
+  ///   like any rejected identify; the stored signature and tracking are
+  ///   kept.
+  /// - The stored signature: only while it is still the one in use (a late
+  ///   reply for an older one doesn't count). Enters the expired state.
+  static void _checkSignatureExpiry(
+    String body,
+    Map<String, String> headers, {
+    String? identifyAs,
+    bool storedSignature = false,
+  }) {
+    final user = identifyAs ?? headers['X-User-Name'];
+    if (user == null || user != _userName || user != _requestedUser) return;
+    final expiredReason = errorReasonOf(body) == 'user_signature_expired';
+    final signature = headers['X-User-Signature'];
+    // An identifyUser() that re-sent the stored signature counts as the
+    // stored one.
+    final sentStored =
+        storedSignature || (signature != null && signature == _userSignature);
+    if (identifyAs != null && !sentStored) {
+      if (!expiredReason) return;
+      _logger.warn(
+        'identifyUser("$user") rejected: the secure signature has expired. '
+        'Get a fresh signature and call identifyUser again.',
+      );
+      _notifySignatureExpired(user);
+      return;
+    }
+    if (signature == null || signature != _userSignature) return;
+    if (expiredReason ||
+        (storedSignature && headers.containsKey('X-User-Session-Time'))) {
+      _onSignatureExpired(user);
+    }
+  }
+
   /// The stored secure signature has passed its session time. It is dropped,
   /// and background traffic stops until the app identifies again with a fresh
   /// one, so the SDK doesn't send a stream of requests that all get 401.
-  static void _onSignatureExpired(String? sentAs, String? signature) {
-    if (sentAs == null || sentAs != _userName) return;
-    if (signature == null || signature != _userSignature) return;
+  static void _onSignatureExpired(String user) {
+    if (_signatureExpired) return;
     _userSignature = null;
     _userSignatureTime = null;
     _signatureExpired = true;
     // The next identify (with a fresh signature) must go out, even if it
     // matches the last one.
     _clearIdentifyMemory();
-    clearUserSignature(sentAs).catchError((_) {});
+    clearUserSignature(user).catchError((_) {});
     _logger.warn(
-      'The secure signature for "$sentAs" has expired. Tracking is paused '
-      'until identifyUser is called again with a fresh signature.',
+      'Secure identify signature expired (401). Call identifyUser() with a '
+      'fresh signature; until then events, screens, ping and automatic '
+      'surveys are skipped and survey submits are held.',
+    );
+    // Entering the state always tells the app, even if it was told about a
+    // rejected new signature before: the state is never entered silently.
+    _expiryNotifiedFor = null;
+    _notifySignatureExpired(user);
+  }
+
+  /// Calls onSignatureExpired for [user], once until an identify for them
+  /// succeeds. Called after the SDK has finished with the reply, so an
+  /// identifyUser() from the callback starts from the new state. Skipped if
+  /// clearAll(), resetUser() or stop() was called, or another user was
+  /// asked for, meanwhile.
+  static void _notifySignatureExpired(String user) {
+    if (_expiryNotifiedFor == user) return;
+    _expiryNotifiedFor = user;
+    final hook = _onSignatureExpiredHook;
+    if (hook == null) return;
+    final gen = _lifecycleGen;
+    Timer.run(() {
+      // An identify for them succeeded, or a reset, meanwhile.
+      if (_expiryNotifiedFor != user) return;
+      if (gen != _lifecycleGen ||
+          _userName != user ||
+          _requestedUser != user ||
+          !_initialized) {
+        // Not told: a later expiry for them tells the app.
+        _expiryNotifiedFor = null;
+        return;
+      }
+      try {
+        final result = hook(SignatureExpiredInfo(userName: user));
+        if (result is Future) {
+          result.then(
+            (_) {},
+            onError: (Object e) =>
+                _logger.debug('onSignatureExpired failed: $e'),
+          );
+        }
+      } catch (e) {
+        _logger.debug('onSignatureExpired threw: $e');
+      }
+    });
+  }
+
+  /// Keeps a survey submit until the next successful identify for the same
+  /// user: in memory only, at most [_maxHeldSubmits] (the oldest goes first).
+  static void _holdSubmit(SubmitFormRequest params) {
+    final user = _userName;
+    _reportSkipped('submit-form', 'signature-expired');
+    if (user == null) return;
+    _heldSubmits.add((user: user, params: params));
+    if (_heldSubmits.length > _maxHeldSubmits) {
+      _heldSubmits.removeAt(0);
+      _logger.warn(
+        'A held survey submit was dropped: more than $_maxHeldSubmits are '
+        'waiting for a fresh secure signature.',
+      );
+    }
+    _logger.debug(
+      'submitForm held until the next identify (secure signature expired)',
     );
   }
 
-  /// Completes at once unless a signature has expired, in which case it waits
-  /// for the next successful identify.
-  static Future<void> _untilSignatureIsFresh() async {
-    if (!_signatureExpired) return;
-    await (_identifiedAgain ??= Completer<void>()).future;
+  /// An identify for [userName] succeeded: their held submits are sent.
+  /// Submits held for another user are dropped, never sent as this one.
+  static void _sendHeldSubmits(String userName) {
+    if (_heldSubmits.isEmpty) return;
+    final held = List.of(_heldSubmits);
+    _heldSubmits.clear();
+    final others = held.where((h) => h.user != userName).length;
+    if (others > 0) {
+      _logger.warn(
+        '$others held survey submit(s) dropped: another user was identified',
+      );
+    }
+    for (final h in held.where((h) => h.user == userName)) {
+      submitForm(h.params).catchError((Object e) {
+        _logger.warn('submitForm API error: $e');
+      });
+    }
+  }
+
+  static void _dropHeldSubmits(String why) {
+    if (_heldSubmits.isEmpty) return;
+    _logger.warn('${_heldSubmits.length} held survey submit(s) dropped: $why');
+    _heldSubmits.clear();
   }
 
   /// The server gave up waiting for this user to be created. The SDK resets
   /// the user, who is then a visitor until the app identifies again.
   static void _onRetriesExhausted(String? sentAs) {
-    if (sentAs == null || sentAs != _userName) return;
+    // Not if the app has already asked for someone else.
+    if (sentAs == null || sentAs != _userName || sentAs != _requestedUser) {
+      return;
+    }
     _logger.debug('User "$sentAs" could not be confirmed; resetting the user');
     resetUser().catchError((_) {});
   }

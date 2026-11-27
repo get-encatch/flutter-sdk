@@ -32,6 +32,7 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   flutter_test:
     sdk: flutter
+  shared_preferences_platform_interface: ^2.4.1
 
 flutter:
   # No assets or fonts needed — forms are rendered in a WebView

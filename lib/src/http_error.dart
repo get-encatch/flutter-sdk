@@ -1,6 +1,7 @@
 /// Internal error for a non-2xx API reply. Not exported from the package.
 library;
 
+import 'dart:convert';
 import 'dart:io' show HttpDate;
 
 /// Thrown by the SDK's request layer when the API answers outside 200–299.
@@ -43,4 +44,16 @@ int? httpStatusOf(Object error) {
   if (error is EncatchHttpException) return error.status;
   final match = RegExp(r'status (\d+)').firstMatch(error.toString());
   return match == null ? null : int.tryParse(match.group(1)!);
+}
+
+/// The `reason` of an error reply body (`{"error": ..., "reason": ...}`), when
+/// it is a string. Anything that isn't JSON gives null.
+String? errorReasonOf(String body) {
+  try {
+    final decoded = jsonDecode(body);
+    if (decoded is Map && decoded['reason'] is String) {
+      return decoded['reason'] as String;
+    }
+  } catch (_) {}
+  return null;
 }

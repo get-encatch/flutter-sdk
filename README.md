@@ -144,7 +144,27 @@ await Encatch.identifyUser(
 - **Time:** epoch milliseconds, as a string. Pass exactly the value your backend signed.
 - **Never put the secret in the app.** Sign on your server.
 - After a successful identify the SDK sends the signature with every request for that user, and keeps it across app restarts (unless `persistUserAcrossRestarts` is false).
-- **Keys with a session time:** identify with a fresh signature on every app launch. When a signature expires the SDK logs one warning and stops tracking until the app identifies again; a survey being submitted at that moment is sent after that identify.
+- **Keys with a session time:** a signature is valid for the key's session time. Sign the time on your server as epoch milliseconds (13 digits), with a clock within 5 minutes of real time.
+- **When the signature expires**, the SDK calls `onSignatureExpired`. Get a fresh signature and identify again:
+
+```dart
+EncatchConfig(
+  onSignatureExpired: (info) async {
+    final secure = await myBackend.encatchSignature(info.userName);
+    // Signed out or switched user meanwhile.
+    if (currentUser?.id != info.userName) return;
+    await Encatch.identifyUser(
+      info.userName,
+      options: IdentifyOptions(secure: secure),
+    );
+  },
+)
+```
+
+  - It is called once per user until an identify for them succeeds, so a signature that keeps being rejected does not loop. It is not called for visitors, and errors in it are ignored.
+  - The SDK learns of the expiry only when the server checks the signature, today on `identifyUser` and `setUserProperties`. It can't warn at launch; to stay ahead, refresh the signature at launch.
+  - If the saved signature expired, the SDK logs one warning and skips events, screens, the ping and automatic surveys until the app identifies again. Survey submits made meanwhile are held in memory (up to 10) and sent after that identify; `resetUser()`, `clearAll()` or identifying another user drop them and end that state.
+  - If the signature you just passed to `identifyUser` has already expired, that identify fails like any rejected identify. The saved signature, if any, and tracking are kept.
 
 ### 3. Track events
 
@@ -240,6 +260,7 @@ EncatchProvider(
     apiBaseUrl: 'https://api.encatch.com',
     webHost: 'https://form.encatch.com',
     persistUserAcrossRestarts: true,
+    onSignatureExpired: (info) { /* see Secure mode */ },
   ),
   child: MyApp(),
 )

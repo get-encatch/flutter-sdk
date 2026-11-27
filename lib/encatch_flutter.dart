@@ -23,6 +23,7 @@ export 'src/types.dart'
         EncatchConfig,
         EncatchRequestInfo,
         EncatchResponseInfo,
+        SignatureExpiredInfo,
         EncatchTheme,
         UserTraits,
         IdentifyOptions,

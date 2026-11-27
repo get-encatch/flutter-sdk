@@ -2,7 +2,7 @@
 
 This release changes how much the SDK sends, how it identifies users and when it shows surveys. No existing method, parameter or type has changed; everything new is optional.
 
-New since 1.2.0-beta.1: `setUserProperties`, and a repeat `identifyUser` for the same user is no longer sent (see below).
+New since 1.2.0-beta.2: `EncatchConfig.onSignatureExpired`. Only a 401 the API marks as an expired signature (or, on older APIs, a 401 on `setUserProperties` with the saved signature) now counts as an expiry; other 401s no longer stop tracking. Survey submits held during an expiry are limited to 10 and are dropped on `resetUser()` and `clearAll()`.
 
 **New, all optional**
 - `EncatchConfig.onRequest` and `onResponse`: debug hooks that report each request, and each call the SDK decides not to send, with the reason. They never carry the API key, headers, the secure signature or bodies.
@@ -10,6 +10,7 @@ New since 1.2.0-beta.1: `setUserProperties`, and a repeat `identifyUser` for the
 - `EncatchProvider(autoStartVisitorSession: false)`: visitors get no background ping and no automatic screen tracking. The session starts when `identifyUser` succeeds (the current screen is then sent once) or when the app calls `startSession()`, and stops again on `resetUser()`. A user restored at launch starts as usual, and calls the app makes itself are always sent. On by default, as before. With it off, surveys set to show immediately, after a delay or on a page visit cannot reach visitors.
 - `Encatch.isIdentified`: true when the SDK has a confirmed identity, which means the user was restored at launch or their `identifyUser` succeeded. During a switch to another user it stays true until the new user's identify succeeds.
 - `Encatch.setUserProperties(userName, traits)`: updates the identified user's properties. Every call is sent. It is ignored unless `userName` is the current user and their identify succeeded; it waits for a pending identify and for an open survey to close; it counts against the identify-user rate limit; an update with `increment` or `decrement` is never retried.
+- `EncatchConfig.onSignatureExpired`: called when the current user's secure signature has expired, so the app can get a fresh one from its server and call `identifyUser` again. Called once per user until an identify for them succeeds, and never for visitors. Errors in the callback are ignored.
 - `EncatchConfig.persistUserAcrossRestarts`: set it to false to keep the user in memory for the current app run only. Nothing about the user is saved on the device, user data an earlier version saved is deleted at init, and the app identifies on every launch. On by default, as before.
 
 **Behaviour changes to be aware of**
@@ -26,7 +27,7 @@ New since 1.2.0-beta.1: `setUserProperties`, and a repeat `identifyUser` for the
 **Fixes: request load**
 - A call made while another was in flight stayed in the queue until the next SDK call or app resume. It is now sent straight away.
 - A request that never answered blocked the queue for the life of the app. Requests now time out after 30 seconds.
-- After a 429 the SDK pauses for the time in `Retry-After` instead of sending more. A survey submit is never dropped for a 429: it waits and is retried.
+- After a 429 the SDK pauses for the time in `Retry-After` instead of sending more. A survey submit is never dropped for a 429: it waits and is retried. If a signed-in user's submit is waiting and another user is identified, or the user is reset, it is dropped with a warning rather than sent as someone else. A visitor who signs in meanwhile still has their answers sent.
 - A screen that carried a survey, tracked many times, sent a show-form request each time. One survey is shown at a time, and a repeated `showForm` for the open survey no longer discards the answers in progress.
 
 **Fixes: surveys**
@@ -44,7 +45,8 @@ New since 1.2.0-beta.1: `setUserProperties`, and a repeat `identifyUser` for the
 **Fixes: secure mode**
 - Identify sends the signature in the headers the gateway reads, including the session time. Keys with a session time rejected every signed identify before.
 - After a successful secure identify the signature is sent with every request for that user and kept across restarts.
-- When a signature expires the SDK stops tracking until the app identifies again, instead of sending requests that all fail.
+- When the saved signature expires the SDK stops tracking until the app identifies again, instead of sending requests that all fail. It counts as expired only when the API says so (`user_signature_expired`), or, on older APIs, on a 401 for `setUserProperties`. A survey submitted meanwhile is held in memory, up to 10, and sent after the next successful identify for that user; `resetUser()`, `clearAll()` or identifying another user drop them and end the expired state.
+- An identify whose new signature has already expired fails like any rejected identify and calls `onSignatureExpired`; the saved signature and tracking are kept.
 - The debug log masks the signature.
 
 **Fixes: session**

@@ -71,6 +71,7 @@ Future<void> startSdk(
   Future<bool> Function(ShowFormInterceptorPayload payload)? onBeforeShowForm,
   void Function(EncatchRequestInfo info)? onRequest,
   void Function(EncatchResponseInfo info)? onResponse,
+  FutureOr<void> Function(SignatureExpiredInfo info)? onSignatureExpired,
 }) async {
   await prepareSdk(api, stored: stored, keepStorage: keepStorage);
   await Encatch.init(
@@ -83,6 +84,7 @@ Future<void> startSdk(
       onRequest: onRequest,
       onResponse: onResponse,
       persistUserAcrossRestarts: persistUserAcrossRestarts,
+      onSignatureExpired: onSignatureExpired,
     ),
   );
 }
@@ -106,6 +108,7 @@ void testFake(
   void Function(FakeApi api)? configure,
   bool debugMode = false,
   void Function(EncatchResponseInfo info)? onResponse,
+  FutureOr<void> Function(SignatureExpiredInfo info)? onSignatureExpired,
 }) {
   test(description, () {
     fakeAsync((async) {
@@ -118,6 +121,7 @@ void testFake(
         stored: stored,
         debugMode: debugMode,
         onResponse: onResponse,
+        onSignatureExpired: onSignatureExpired,
       ).catchError((Object e) => setupError = e);
       async.flushMicrotasks();
       expect(setupError, isNull, reason: 'SDK set-up failed');
