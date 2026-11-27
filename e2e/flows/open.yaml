@@ -1,10 +1,11 @@
 # Starts the app from clean and goes in.
 #   ENV       mock | dev
 #   IDENTITY  login | visitor | stay (stay on the login screen)
-#   API_KEY, FORM_ID   only for dev
+#   API_KEY, FORM_ID   for dev; on the mock, API_KEY other than - replaces
+#             the mock's default key
 #   SECRET    a secure test key's secret (dev, optional)
 #   SESSION   yes when that key has a session time
-#   SIGNATURE none | valid | wrong
+#   SIGNATURE none | valid | wrong | expired (signed 20 minutes ago)
 #   TRACK_ROOT yes to turn on the navigator observer's trackRootRoute
 #   VISITOR_AUTOSTART no to turn off the provider's autoStartVisitorSession
 #   PERSIST_USER no to turn off the config's persistUserAcrossRestarts
@@ -31,6 +32,15 @@ appId: com.encatch.fluttere2e
       - inputText: ${FORM_ID}
       # Enter closes the keyboard. Maestro's hideKeyboard does not work in
       # this app on iOS.
+      - pressKey: Enter
+- runFlow:
+    when:
+      true: ${ENV == 'mock' && API_KEY != '-'}
+    commands:
+      - tapOn:
+          id: "setup-api-key"
+      - eraseText: 40
+      - inputText: ${API_KEY}
       - pressKey: Enter
 - runFlow:
     when:

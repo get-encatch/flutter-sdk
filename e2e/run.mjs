@@ -602,6 +602,61 @@ flows.M15 = {
 flows.M13 = restartFlow('Restart: the identified user is restored (the default)', true);
 flows.M14 = restartFlow('Restart with persistUserAcrossRestarts off: a visitor again', false);
 
+const MOCK_SESSION_KEY = 'mock-secure-session-api-key';
+
+flows.M16 = {
+  title: 'onSignatureExpired: signing in with an expired signature, the app gets a fresh one',
+  async run(c) {
+    await mock('/__mock/reset', 'POST');
+    open({ ENV: 'mock', API_KEY: MOCK_SESSION_KEY, SESSION: 'yes', SIGNATURE: 'expired' });
+    await sleep(5000);
+    flow('expect-status', { IDENTIFIED: 'yes' });
+    const ids = await requests('identify-user');
+    c.eq('identify-user statuses', ids.map((r) => r.status), [401, 200]);
+    const time = (r) => r && header(r, 'x-user-session-time');
+    c.ok('the first carried a session time', !!time(ids[0]));
+    c.ok('the second a different one', !!time(ids[1]) && time(ids[1]) !== time(ids[0]), `${time(ids[0])} ${time(ids[1])}`);
+    const user = ids[0] && header(ids[0], 'x-user-name');
+    const calls = (await reports()).filter((h) => h.kind === 'signatureExpired');
+    c.eq('onSignatureExpired calls', calls.map((h) => h.userName), [user]);
+    const later = ids[1] ? (await requests()).filter((r) => r.at > ids[1].at) : [];
+    c.ok('there are requests after the fresh identify', later.length > 0);
+    c.ok(
+      'every later request carries the user, the id and the signature',
+      later.every((r) => header(r, 'x-user-name') === user && header(r, 'x-user-id') && header(r, 'x-user-signature')),
+      brief(later.filter((r) => !header(r, 'x-user-signature'))),
+    );
+  },
+};
+
+flows.M17 = {
+  title: 'onSignatureExpired: the stored signature expires, setUserProperties finds it (takes about 3 minutes)',
+  async run(c) {
+    await mock('/__mock/reset', 'POST');
+    // A one-minute session time, so the wait is short.
+    await mock('/__mock/scenario', 'POST', { apiKeys: { [MOCK_SESSION_KEY]: { sessionTimeMinutes: 1 } } });
+    open({ ENV: 'mock', API_KEY: MOCK_SESSION_KEY, SESSION: 'yes', SIGNATURE: 'valid' });
+    await sleep(5000);
+    flow('expect-status', { IDENTIFIED: 'yes' });
+    // Expired once more than one whole minute old.
+    await sleep(130000);
+    tap('set-props');
+    await sleep(6000);
+    const ids = await requests('identify-user');
+    c.eq('identify-user statuses: login, the update, the fresh identify', ids.map((r) => r.status), [200, 401, 200]);
+    c.ok('the 401 was the update', !!ids[1]?.body?.userAttributes, JSON.stringify(ids[1]?.body ?? {}).slice(0, 120));
+    const user = ids[0] && header(ids[0], 'x-user-name');
+    const calls = (await reports()).filter((h) => h.kind === 'signatureExpired');
+    c.eq('onSignatureExpired calls', calls.map((h) => h.userName), [user]);
+    c.eq('other 401s', (await requests()).filter((r) => r.status === 401 && r.endpoint !== 'identify-user').map((r) => r.endpoint), []);
+    tap('tab-events');
+    tap('track-custom-event');
+    await sleep(4000);
+    const events = ids[2] ? (await requests('track-event')).filter((r) => r.at > ids[2].at) : [];
+    c.ok('tracking goes on after the fresh identify', events.some((r) => r.status === 200 && header(r, 'x-user-signature') === header(ids[2], 'x-user-signature')));
+  },
+};
+
 // ---------------------------------------------------------------------------
 // DEV flows: real triggers, real forms, real gateway. No bursts.
 // ---------------------------------------------------------------------------
@@ -876,7 +931,7 @@ flows.D16 = {
 };
 
 flows.D15 = {
-  title: 'A real signature expiry on the session-time key (takes about 18 minutes)',
+  title: 'A real signature expiry on the session-time key, found by setUserProperties (takes about 18 minutes)',
   dev: true,
   slow: true,
   async run(c) {
@@ -899,40 +954,51 @@ flows.D15 = {
     const line = (h) => `${minutes(h)} min ${h.endpoint} ${h.status ?? h.reason ?? h.outcome}`;
 
     await sleep((key.sessionTimeMinutes + 1.5) * 60000);
-    tap('tab-events');
-    tap('track-custom-event');
-    await sleep(5000);
+    // The gateway checks the signature on identify-user only: the update is
+    // where the expiry shows. The app's onSignatureExpired identifies again.
+    tap('set-props');
+    await sleep(8000);
 
-    let hooks = await hookCalls();
-    const notOk = hooks.filter((h) => h.outcome !== 'ok');
-    c.note(`not sent or not accepted, first 12: ${notOk.slice(0, 12).map(line).join('; ') || 'none'}`);
-    const rejected = hooks.find((h) => h.status === 401);
-    c.ok('the server answered 401 once the session time had passed', !!rejected);
-    if (rejected) {
-      c.note(`first 401: ${line(rejected)}`);
-      c.ok('not before the session time', Number(minutes(rejected)) >= key.sessionTimeMinutes - 0.5, line(rejected));
-      const after = hooks.filter((h) => h.receivedAt > rejected.receivedAt);
-      c.eq('requests sent after the 401, before identifying again', after.filter((h) => h.outcome !== 'skipped').map(line), []);
-      c.ok(
-        'the tapped event was held back as signature-expired',
-        after.some((h) => h.endpoint === 'track-event' && h.reason === 'signature-expired'),
-        after.map(line).join('; '),
-      );
-    }
-    c.eq('failures other than 401', hooks.filter((h) => h.outcome === 'error' && h.status !== 401).map(line), []);
+    const hooks = await hookCalls();
+    c.note(`not ok, first 12: ${hooks.filter((h) => h.outcome !== 'ok').slice(0, 12).map(line).join('; ') || 'none'}`);
+    c.eq('identify-user replies: login, the update, the fresh identify', hooks.filter((h) => h.endpoint === 'identify-user').map((h) => h.status), [200, 401, 200]);
+    const calls = (await reports()).filter((h) => h.kind === 'signatureExpired');
+    c.eq('onSignatureExpired calls', calls.map((h) => h.userName), [login.userName]);
+    c.eq('other 401s', hooks.filter((h) => h.status === 401 && h.endpoint !== 'identify-user').map(line), []);
 
-    // The app's backend hands over a fresh signature.
-    tap('tab-home');
-    tap('reidentify');
-    await sleep(5000);
-    const again = (await identifies()).at(-1);
     tap('tab-events');
     tap('track-screen-manual');
     await sleep(6000);
-    hooks = (await hookCalls()).filter((h) => h.receivedAt > again.receivedAt - 5000);
-    c.ok('identifying again succeeded', hooks.some((h) => h.endpoint === 'identify-user' && h.outcome === 'ok'), hooks.map(line).join('; '));
-    c.ok('tracking resumed', hooks.some((h) => h.endpoint === 'track-screen' && h.outcome === 'ok'), hooks.map(line).join('; '));
-    c.eq('failures after identifying again', hooks.filter((h) => h.outcome === 'error').map(line), []);
+    const after = (await hookCalls()).filter((h) => h.receivedAt > calls[0]?.receivedAt);
+    c.ok('tracking goes on', after.some((h) => h.endpoint === 'track-screen' && h.outcome === 'ok'), after.map(line).join('; '));
+    c.eq('failures after the fresh identify', after.filter((h) => h.outcome === 'error' && !(h.endpoint === 'identify-user' && h.status === 401)).map(line), []);
+  },
+};
+
+flows.D17 = {
+  title: 'onSignatureExpired on DEV: signing in with an expired signature, the app identifies again',
+  dev: true,
+  async run(c) {
+    const key = dev.secureSessionKey;
+    await mock('/__mock/reset', 'POST');
+    openDev('login', dev.forms.manual.id, {
+      API_KEY: key.sdkKey,
+      SECRET: key.secret,
+      SESSION: 'yes',
+      SIGNATURE: 'expired',
+    });
+    await sleep(6000);
+    flow('expect-status', { IDENTIFIED: 'yes' });
+    const hooks = await hookCalls();
+    c.eq('identify-user replies', hooks.filter((h) => h.endpoint === 'identify-user').map((h) => h.status), [401, 200]);
+    const user = (await identifies())[0]?.userName;
+    const calls = (await reports()).filter((h) => h.kind === 'signatureExpired');
+    c.eq('onSignatureExpired calls', calls.map((h) => h.userName), [user]);
+    c.eq(
+      'other failures',
+      hooks.filter((h) => h.outcome === 'error' && !(h.endpoint === 'identify-user' && h.status === 401)).map((h) => `${h.endpoint} ${h.status}`),
+      [],
+    );
   },
 };
 

@@ -46,14 +46,17 @@ Build and install the app first (`flutter build apk --release` in `e2e/app`, or 
 | M13 | Mock | The app is closed and reopened: the identified user is restored (the default) |
 | M14 | Mock | The same with `persistUserAcrossRestarts` off: a visitor again, nothing carries a user name or id |
 | M15 | Mock | `identifyUser` repeats are not sent; `setUserProperties` always is, with the user's id; after a restart the first identify of the run is sent |
+| M16 | Mock | Signing in with an expired signature: identify 401 then 200, `onSignatureExpired` called once, the app identifies again with a fresh signature |
+| M17 | Mock | The stored signature expires (one-minute key): `setUserProperties` gets the 401, `onSignatureExpired` is called once, tracking goes on after the fresh identify. About 3 minutes |
 | D1–D5 | DEV | Manual, page-visit, tracked-event, immediate and delayed triggers: the right form shows, events carry its id, the X is a dismissal |
 | D6–D7 | DEV | The same for a visitor (manual, page visit): the X sends dismiss-form and no survey event |
 | D8–D11 | DEV | Secure identify: valid and wrong signature, with and without a session time |
 | D12 | DEV | The form is submitted; the X on the thank-you screen is not a dismissal |
 | D13 | DEV | Log out, then log in as another user: two different ids from the server, no failed request |
 | D14 | DEV | "Remind me later": the app event and the survey event, not a dismissal |
-| D15 | DEV | A real signature expiry on the session-time key. Slow (about 18 minutes): runs only with `--only D15` |
+| D15 | DEV | A real signature expiry on the session-time key, found by `setUserProperties`; the app identifies again from `onSignatureExpired`. Slow (about 18 minutes): runs only with `--only D15` |
 | D16 | DEV | Q&A with AI: the answer arrives in pieces, and the form submits |
+| D17 | DEV | Signing in with an expired signature: the gateway's 401 carries the reason, `onSignatureExpired` is called once, the fresh identify succeeds |
 
 ## Rules
 

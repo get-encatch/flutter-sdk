@@ -165,6 +165,18 @@ class _E2eAppState extends State<E2eApp> {
         webHost: config.webHost,
         debugMode: true,
         persistUserAcrossRestarts: config.persistUser,
+        // What an app does: get a fresh signature from its backend and
+        // identify again, unless the user signed out or switched meanwhile.
+        onSignatureExpired: (info) async {
+          report('signatureExpired', {'userName': info.userName});
+          final secure = await sign(info.userName, SignatureMode.valid);
+          if (Encatch.userName != info.userName) return;
+          await Encatch.identifyUser(
+            info.userName,
+            options: secure == null ? null : IdentifyOptions(secure: secure),
+          );
+          report('identify', {'userName': info.userName, 'signature': 'fresh'});
+        },
         onBeforeShowForm: (payload) async {
           report('beforeShowForm', {
             'formId': payload.formId,
@@ -354,7 +366,11 @@ class _SetupScreenState extends State<SetupScreen> {
 // Login
 // ---------------------------------------------------------------------------
 
-enum SignatureMode { none, valid, wrong }
+/// `expired` signs a time 20 minutes old: already past a 15-minute session
+/// time.
+enum SignatureMode { none, valid, wrong, expired }
+
+const _expiredAge = Duration(minutes: 20);
 
 /// Stands in for the customer's backend: returns a signature for [userName].
 Future<SecureOptions?> sign(String userName, SignatureMode mode) async {
@@ -367,7 +383,8 @@ Future<SecureOptions?> sign(String userName, SignatureMode mode) async {
       Uri.parse(
         '${config.collector}/__mock/sign'
         '?userName=${Uri.encodeQueryComponent(userName)}'
-        '&apiKey=${Uri.encodeQueryComponent(config.apiKey)}',
+        '&apiKey=${Uri.encodeQueryComponent(config.apiKey)}'
+        '${mode == SignatureMode.expired ? '&ageMinutes=${_expiredAge.inMinutes}' : ''}',
       ),
     );
     final json = jsonDecode(r.body) as Map<String, dynamic>;
@@ -376,8 +393,9 @@ Future<SecureOptions?> sign(String userName, SignatureMode mode) async {
       generatedDateTimeinUTC: json['time'] as String?,
     );
   }
+  final age = mode == SignatureMode.expired ? _expiredAge : Duration.zero;
   final time = config.sessionTime
-      ? '${DateTime.now().millisecondsSinceEpoch}'
+      ? '${DateTime.now().subtract(age).millisecondsSinceEpoch}'
       : null;
   final signature = Hmac(
     sha256,
