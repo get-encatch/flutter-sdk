@@ -522,10 +522,15 @@ class EncatchResponseInfo {
   /// Why a `skipped` call was not sent. Null otherwise. One of:
   /// - `rate-limited`: during the pause after a 429
   /// - `collapsed`: the same event or screen was tracked within the last second
-  /// - `duplicate`: an identify identical to the last one
+  /// - `duplicate`: an identify for the same user with the same traits, or
+  ///   none, as the last identify of this app run
   /// - `signature-expired`: the secure signature expired; identify again
   /// - `visitor`: a survey event for a user who is not identified
   /// - `survey-open`: a survey is already loading, open or waiting to show
+  /// - `not-identified`: a `setUserProperties` call when no user is
+  ///   identified, or that user's identify failed
+  /// - `wrong-user`: a `setUserProperties` call for a user who is not the
+  ///   current one
   final String? reason;
 
   const EncatchResponseInfo({

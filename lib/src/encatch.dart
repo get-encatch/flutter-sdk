@@ -36,6 +36,72 @@ const _submitAttemptsOn429 = 3;
 const _collapseWindowMs = 1000;
 
 // ============================================================================
+// Traits
+// ============================================================================
+
+/// Traits as sent: DateTime values in set / setOnce as ISO strings.
+UserTraits? _wireTraits(UserTraits? traits) {
+  if (traits == null) return null;
+  Map<String, dynamic>? convertDates(Map<String, dynamic>? map) =>
+      map?.map((k, v) => MapEntry(k, v is DateTime ? v.toIso8601String() : v));
+  return UserTraits(
+    set: convertDates(traits.set),
+    setOnce: convertDates(traits.setOnce),
+    increment: traits.increment,
+    decrement: traits.decrement,
+    unset: traits.unset,
+  );
+}
+
+/// What a request will carry for [traits] (dates as ISO strings, `toJson`
+/// honoured), as a copy, and the key that compares it for duplicates: null
+/// when nothing is left once empty operations are dropped. Null as a whole
+/// when a request can't carry the traits (a BigInt, NaN, a circular map, an
+/// object without toJson).
+({Map<String, dynamic>? json, String? key})? _prepareTraits(
+  UserTraits? traits,
+) {
+  if (traits == null) return (json: null, key: null);
+  try {
+    final json =
+        jsonDecode(jsonEncode(_wireTraits(traits)!.toJson()))
+            as Map<String, dynamic>;
+    final normal = <String, Object?>{};
+    json.forEach((op, value) {
+      if (value is List) {
+        if (value.isEmpty) return;
+        // unset is a set of names: its order doesn't matter. A sorted copy;
+        // the caller's list is never changed.
+        normal[op] = op == r'$unset'
+            ? (List.of(value)..sort((a, b) => '$a'.compareTo('$b')))
+            : value;
+      } else if (value is Map) {
+        if (value.isNotEmpty) normal[op] = value;
+      } else if (value != null) {
+        normal[op] = value;
+      }
+    });
+    return (
+      json: json,
+      key: normal.isEmpty ? null : jsonEncode(_sortedDeep(normal)),
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+/// [value] with every map's keys in sorted order, so the same content always
+/// gives the same text.
+Object? _sortedDeep(Object? value) {
+  if (value is Map) {
+    final keys = value.keys.map((k) => '$k').toList()..sort();
+    return {for (final k in keys) k: _sortedDeep(value[k])};
+  }
+  if (value is List) return value.map(_sortedDeep).toList();
+  return value;
+}
+
+// ============================================================================
 // API Endpoint paths
 // ============================================================================
 
@@ -188,9 +254,38 @@ class Encatch {
   static void Function(EncatchRequestInfo)? _onRequest;
   static void Function(EncatchResponseInfo)? _onResponse;
 
-  // Deduplication. The last identify sent or in flight; when each event name
-  // was last tracked; the last screen tracked and when.
-  static String? _lastIdentifyKey;
+  // identifyUser() dedupe, in memory for this app run: the user an identify
+  // was sent (or is in flight) for, the last traits and signature sent, and
+  // the locale and country the last identify carried. The tokens say which
+  // identify set the memory, so a failed one can clear what it set.
+  static String? _identifiedName;
+  static String? _lastTraitsKey;
+  static String? _lastOptionsKey;
+  static String? _lastIdentifyLocale;
+  static String? _lastIdentifyCountry;
+  static Object? _identifyMemoryToken;
+  static Object? _traitsMemoryToken;
+
+  // The user whose identify succeeded, or who was restored with their id at
+  // init: the only user setUserProperties() may update. Cleared by a user
+  // switch until the new user's identify succeeds, and by resetUser and
+  // clearAll.
+  static String? _confirmedName;
+
+  // Identifies queued, retrying or held, by user name: setUserProperties()
+  // waits for them.
+  static final Map<String, Set<Future<void>>> _pendingIdentifies = {};
+
+  // setUserProperties: updates waiting their turn (one is sent at a time, in
+  // call order), waits for an open survey, and a counter bumped by clearAll()
+  // and stop() so waits started before then give up.
+  static final List<void Function()> _userPropsWaiting = [];
+  static bool _userPropsBusy = false;
+  static final List<Completer<void>> _surveyIdleWaiters = [];
+  static Timer? _surveyIdleTimer;
+  static int _lifecycleGen = 0;
+
+  // When each event name was last tracked; the last screen tracked and when.
   static final Map<String, int> _lastEventAt = {};
   static String? _lastTrackedScreen;
   static int _lastTrackedScreenAt = 0;
@@ -209,7 +304,7 @@ class Encatch {
   static bool _screenBeforeInitIsAutomatic = false;
 
   // The latest identifyUser call made during a 429 pause, sent when it ends.
-  static Future<void> Function()? _heldIdentify;
+  static _HeldIdentify? _heldIdentify;
   static void Function()? _removePauseListener;
 
   // Pending pre-fill responses
@@ -337,6 +432,7 @@ class Encatch {
       _feedbackTransactions = await getFeedbackTransactions('anonymous');
     }
     _identityConfirmed = _hasIdentity;
+    _confirmedName = _identityConfirmed ? _userName : null;
 
     // A session stopped in an earlier run of the app stays stopped.
     _isSessionStopped = await getSessionStopped();
@@ -380,6 +476,15 @@ class Encatch {
   ///
   /// Optionally attach [traits] to update the user's profile and [options] for
   /// locale, country, or HMAC secure verification.
+  ///
+  /// After the first identify of each app run, a repeat for the same user with
+  /// the same traits, or none, is not sent. It is sent again when the
+  /// signature changes, or when a locale or country is given that differs
+  /// from what the last identify carried. To update properties again on
+  /// purpose (a repeated `increment`, say), use [setUserProperties].
+  ///
+  /// Traits a request cannot carry (a `BigInt`, `NaN`, a circular map, or an
+  /// object without `toJson`) are refused with a warning and nothing is sent.
   static Future<void> identifyUser(
     String userName, {
     UserTraits? traits,
@@ -387,33 +492,82 @@ class Encatch {
   }) async {
     if (!_initialized) return;
 
-    // During a 429 pause the call is held, not dropped, so a sign-in is not
-    // lost. Only the latest call is kept; it is sent when the pause ends.
-    if (rate.isPaused(rate.Bucket.tracking)) {
-      _heldIdentify = () =>
-          identifyUser(userName, traits: traits, options: options);
+    // Traits a request body can't carry would fail inside the queue: refuse
+    // them now.
+    final prepared = _prepareTraits(traits);
+    if (prepared == null) {
+      _logger.warn(
+        'identifyUser "$userName" ignored: traits contain a value that can\'t '
+        'be sent (circular object, BigInt, NaN or an object without toJson).',
+      );
       return;
     }
 
-    // An identify with the same user, traits, locale, country and signature
-    // as the last one sent or in flight is skipped.
-    final identifyKey = _identifyKey(userName, traits, options);
-    if (identifyKey != null && identifyKey == _lastIdentifyKey) {
-      _reportSkipped('identify-user', 'duplicate');
+    return _serialized(() async {
+      // Decided in the identity chain, after earlier identity calls: a
+      // resetUser() or clearAll() made just before has run (clearAll() ends a
+      // pause).
+      if (rate.isPaused(rate.Bucket.tracking)) {
+        _holdIdentify(userName, traits, options, prepared.key);
+        return;
+      }
+      await _identifyNow(userName, traits, options, prepared.key);
+    });
+  }
+
+  /// During a 429 pause an identify is held, not dropped, so a sign-in is not
+  /// lost; it is sent when the pause ends. Only the latest is kept, as a
+  /// queued identify would replace an earlier one. A call that repeats the
+  /// held identify, or the last one sent, is skipped: holding it would make
+  /// updates wait for it rather than be refused as rate-limited.
+  /// setUserProperties() for the held user waits for it.
+  static void _holdIdentify(
+    String userName,
+    UserTraits? traits,
+    IdentifyOptions? options,
+    String? traitsKey,
+  ) {
+    // A repeat of the held call: keep that one.
+    if (_heldIdentify?.covers(userName, traitsKey, options) ?? false) {
+      _reportDuplicateIdentify(userName);
       return;
     }
-    _lastIdentifyKey = identifyKey;
-
-    return _serialized(
-      () => _identifyNow(userName, traits, options, identifyKey),
+    // A repeat of the last identify actually sent: the held one (a different
+    // call) is replaced by nothing, as a queued identify replaced by this one
+    // would end in a duplicate.
+    if (_isDuplicateIdentify(userName, traitsKey, options)) {
+      _releaseHeldIdentify();
+      _reportDuplicateIdentify(userName);
+      return;
+    }
+    // What the dedupe would remember once this is sent: taken from what was
+    // actually sent, never from a held call this replaces (that one is not
+    // sent).
+    final sameUser = _identifiedName == userName;
+    _releaseHeldIdentify();
+    _heldIdentify = _HeldIdentify(
+      userName: userName,
+      traitsKey: traitsKey ?? (sameUser ? _lastTraitsKey : null),
+      optionsKey: _identifyOptionsKey(options),
+      locale: options?.locale ?? (sameUser ? _lastIdentifyLocale : null),
+      country: options?.country ?? (sameUser ? _lastIdentifyCountry : null),
+      send: () => identifyUser(userName, traits: traits, options: options),
+      done: _addPendingIdentify(userName),
     );
+  }
+
+  /// Forgets the identify held during a 429 pause, if any.
+  static void _releaseHeldIdentify() {
+    final held = _heldIdentify;
+    _heldIdentify = null;
+    held?.done();
   }
 
   /// Runs identity changes one after the other, so a `resetUser()` followed
   /// straight away by `identifyUser()`, neither awaited, ends as that user.
   static Future<void> _identityLock = Future<void>.value();
 
-  static Future<void> _serialized(Future<void> Function() change) {
+  static Future<T> _serialized<T>(Future<T> Function() change) {
     final previous = _identityLock;
     final done = Completer<void>();
     _identityLock = done.future;
@@ -424,10 +578,41 @@ class Encatch {
     String userName,
     UserTraits? traits,
     IdentifyOptions? options,
-    String? identifyKey,
+    String? traitsKey,
   ) async {
     final secure = options?.secure;
+
+    // Dedupe, checked here, after earlier identity calls have run, so a
+    // resetUser() made just before is taken into account.
+    if (_isDuplicateIdentify(userName, traitsKey, options)) {
+      _reportDuplicateIdentify(userName);
+      return;
+    }
+    final optionsKey = _identifyOptionsKey(options);
+    final locale = options?.locale;
+    final country = options?.country;
+    final memoryToken = Object();
+    if (userName != _identifiedName) {
+      _lastTraitsKey = null;
+      _traitsMemoryToken = null;
+      _lastIdentifyLocale = null;
+      _lastIdentifyCountry = null;
+    }
+    _identifiedName = userName;
+    _lastOptionsKey = optionsKey;
+    if (traitsKey != null) {
+      _lastTraitsKey = traitsKey;
+      _traitsMemoryToken = memoryToken;
+    }
+    if (locale != null) _lastIdentifyLocale = locale;
+    if (country != null) _lastIdentifyCountry = country;
+    _identifyMemoryToken = memoryToken;
+    final finishPending = _addPendingIdentify(userName);
+
     final previousUser = _userName;
+    // A different user (or a visitor before) is not confirmed until this
+    // identify succeeds.
+    if (previousUser != userName) _confirmedName = null;
     if (previousUser != null && previousUser != userName) {
       // A user switch: the previous user's signature goes with them.
       _userSignature = null;
@@ -457,30 +642,12 @@ class Encatch {
       setPreferences(Preferences(country: options.country)).catchError((_) {});
     }
 
-    // Convert DateTime values in set / setOnce to ISO strings
-    Map<String, dynamic>? _convertDates(Map<String, dynamic>? map) {
-      if (map == null) return null;
-      return map.map(
-        (k, v) => MapEntry(k, v is DateTime ? v.toIso8601String() : v),
-      );
-    }
-
-    final processedTraits = traits == null
-        ? null
-        : UserTraits(
-            set: _convertDates(traits.set),
-            setOnce: _convertDates(traits.setOnce),
-            increment: traits.increment,
-            decrement: traits.decrement,
-            unset: traits.unset,
-          );
-
     final deviceInfo = await _buildDeviceInfo();
     final req = IdentifyUserRequest(
       userName: userName,
       userSignature: secure?.signature,
       deviceInfo: deviceInfo,
-      userAttributes: processedTraits,
+      userAttributes: _wireTraits(traits),
       feedbackTransactions: _feedbackTransactions,
     );
 
@@ -502,7 +669,10 @@ class Encatch {
           identifySignature: secure?.signature,
         );
         // A late reply: the app has reset or identified someone else since.
-        if (_userName != userName) return;
+        if (_userName != userName) {
+          finishPending();
+          return;
+        }
         if (secure != null) {
           // From now on the signature goes on every request for this user.
           _userSignature = secure.signature;
@@ -522,6 +692,9 @@ class Encatch {
           await setUserId(userName, res.userId!);
         }
         _identityConfirmed = _hasIdentity;
+        if (_identityConfirmed && _userName == userName) {
+          _confirmedName = userName;
+        }
         if (res.feedbackTransactions != null) {
           _feedbackTransactions = res.feedbackTransactions;
           await setFeedbackTransactions(userName, res.feedbackTransactions!);
@@ -547,42 +720,343 @@ class Encatch {
             skipImmediateTrackScreen: !wasVisitorQuiet,
           ),
         );
+        finishPending();
       },
       onDropped: () {
+        finishPending();
         // The server never accepted it, so the same call must be sent again.
-        if (_lastIdentifyKey == identifyKey) _lastIdentifyKey = null;
+        if (_identifyMemoryToken == memoryToken) {
+          _clearIdentifyMemory();
+        } else if (_traitsMemoryToken == memoryToken) {
+          // Its traits were not sent, even if a later identify (without
+          // traits) took over the rest of the memory.
+          _lastTraitsKey = null;
+          _traitsMemoryToken = null;
+        }
       },
     );
 
     queue.flush().catchError((_) {});
   }
 
-  /// A stable text form of an identify call, for spotting repeats. Null when
-  /// the traits can't be encoded, in which case the call is never skipped.
-  static String? _identifyKey(
+  static String _identifyOptionsKey(IdentifyOptions? options) => jsonEncode([
+    options?.secure?.signature,
+    options?.secure?.generatedDateTimeinUTC,
+  ]);
+
+  /// The identify dedupe, in memory for this app run. Sent: the first
+  /// identify of the run or a different user, a changed signature, a locale
+  /// or country that differs from what the last identify carried, new
+  /// traits. Not sent: the same user again with no traits, or the same
+  /// traits, as the last identify sent or still in flight.
+  static bool _isDuplicateIdentify(
     String userName,
-    UserTraits? traits,
+    String? traitsKey,
     IdentifyOptions? options,
   ) {
-    Map<String, dynamic>? plain(Map<String, dynamic>? map) => map?.map(
-      (k, v) => MapEntry(k, v is DateTime ? v.toIso8601String() : v),
+    final locale = options?.locale;
+    final country = options?.country;
+    return userName == _identifiedName &&
+        _identifyOptionsKey(options) == _lastOptionsKey &&
+        (locale == null || locale == _lastIdentifyLocale) &&
+        (country == null || country == _lastIdentifyCountry) &&
+        (traitsKey == null || traitsKey == _lastTraitsKey);
+  }
+
+  static void _reportDuplicateIdentify(String userName) {
+    _logger.debug(
+      'identifyUser "$userName" skipped: same user and traits as the last '
+      'identify in this app run. To update properties again on purpose '
+      '(for example a repeated increment), use '
+      'setUserProperties("$userName", traits).',
     );
-    try {
-      return jsonEncode([
-        userName,
-        plain(traits?.set),
-        plain(traits?.setOnce),
-        traits?.increment,
-        traits?.decrement,
-        traits?.unset,
-        options?.locale,
-        options?.country,
-        options?.secure?.signature,
-        options?.secure?.generatedDateTimeinUTC,
-      ]);
-    } catch (_) {
-      return null;
+    _reportSkipped('identify-user', 'duplicate');
+  }
+
+  /// Forgets what the identifyUser() dedupe remembers.
+  static void _clearIdentifyMemory() {
+    _identifiedName = null;
+    _lastTraitsKey = null;
+    _lastOptionsKey = null;
+    _lastIdentifyLocale = null;
+    _lastIdentifyCountry = null;
+    _identifyMemoryToken = null;
+    _traitsMemoryToken = null;
+  }
+
+  /// Registers an identify of [userName] as pending; the returned function
+  /// ends it (safe to call more than once).
+  static void Function() _addPendingIdentify(String userName) {
+    final done = Completer<void>();
+    final set = _pendingIdentifies.putIfAbsent(userName, () => {});
+    set.add(done.future);
+    return () {
+      if (done.isCompleted) return;
+      done.complete();
+      set.remove(done.future);
+      if (set.isEmpty && identical(_pendingIdentifies[userName], set)) {
+        _pendingIdentifies.remove(userName);
+      }
+    };
+  }
+
+  /// Updates the identified user's properties, with the same operations as
+  /// [identifyUser]'s traits.
+  ///
+  /// Never deduplicated: every call is sent. [userName] is checked, not used
+  /// to switch users: it must be the current user, and their identify must
+  /// have succeeded (or they were restored at launch). Otherwise the call is
+  /// ignored, so a pending or failed switch can't update the wrong person.
+  ///
+  /// Waits for an identify of [userName] that is still in flight, and for an
+  /// open survey to close. Updates are sent one after another, in call order.
+  /// Ignored during a rate-limit pause and after a secure signature has
+  /// expired. An update with `increment` or `decrement` is not retried, so a
+  /// timeout can't apply it twice.
+  ///
+  /// It uses the identify-user endpoint and counts against its rate limit
+  /// (about 5 per minute per user); a 429 there pauses all tracking.
+  ///
+  /// Completes once the update is queued or ignored. Don't await it inside
+  /// `EncatchConfig.onBeforeShowForm`: the survey being shown counts as
+  /// open, so the update waits for it while the survey waits for your
+  /// callback. Call it without awaiting there.
+  static Future<void> setUserProperties(
+    String userName,
+    UserTraits traits,
+  ) async {
+    if (!_initialized) return;
+    final prepared = _prepareTraits(traits);
+    if (prepared == null) {
+      _logger.warn(
+        'setUserProperties("$userName") ignored: traits contain a value that '
+        'can\'t be sent (circular object, BigInt, NaN or an object without '
+        'toJson).',
+      );
+      return;
     }
+    if (prepared.key == null) {
+      _logger.debug('setUserProperties ignored: no traits to set.');
+      return;
+    }
+    // A copy of what will be sent, taken now: the caller may change the
+    // object meanwhile.
+    final wire = prepared.json!;
+    bool hasEntries(Object? op) => op is Map && op.isNotEmpty;
+    final counts =
+        hasEntries(wire[r'$increment']) || hasEntries(wire[r'$decrement']);
+
+    // Identity calls made before this one run first. Then wait, outside the
+    // identity chain so a resetUser() is not held up, for an identify of this
+    // user still in flight, and for an open survey to close.
+    final gen = _lifecycleGen;
+    while (true) {
+      final pending = await _serialized(() async {
+        final set = _pendingIdentifies[userName];
+        return set == null || set.isEmpty ? null : set.toList();
+      });
+      if (pending != null) {
+        await Future.wait(pending);
+      } else if (_initialized && _isSurveyOpen) {
+        await _waitForSurveyIdle();
+      } else {
+        break;
+      }
+      if (gen != _lifecycleGen || !_initialized) return;
+    }
+    return _serialized(() => _setUserPropertiesNow(userName, wire, counts));
+  }
+
+  static Future<void> _setUserPropertiesNow(
+    String userName,
+    Map<String, dynamic> wire,
+    bool counts,
+  ) async {
+    if (!_initialized) return;
+    if (_userName == null) {
+      _logger.debug(
+        'setUserProperties ignored: no user is identified. Call '
+        'identifyUser() first.',
+      );
+      _reportSkipped('identify-user', 'not-identified');
+      return;
+    }
+    if (_userName != userName) {
+      _logger.warn(
+        'setUserProperties("$userName") ignored: the current user is '
+        '"$_userName".',
+      );
+      _reportSkipped('identify-user', 'wrong-user');
+      return;
+    }
+    if (_userId == null || _confirmedName != userName) {
+      _logger.warn(
+        'setUserProperties("$userName") ignored: "$userName" isn\'t '
+        'identified (identifyUser failed or was never called).',
+      );
+      _reportSkipped('identify-user', 'not-identified');
+      return;
+    }
+    if (_signatureExpired) {
+      _logger.debug(
+        'setUserProperties("$userName") ignored: the secure signature '
+        'expired; identify again.',
+      );
+      _reportSkipped('identify-user', 'signature-expired');
+      return;
+    }
+    if (rate.isPaused(rate.Bucket.tracking)) {
+      _logger.warn('setUserProperties ignored: rate limited, try again later.');
+      _reportSkipped('identify-user', 'rate-limited');
+      return;
+    }
+
+    // A later identifyUser() with traits is sent again: the properties may
+    // have changed since.
+    _lastTraitsKey = null;
+    _traitsMemoryToken = null;
+
+    final userId = _userId!;
+    final gen = _lifecycleGen;
+    final deviceInfo = await _buildDeviceInfo();
+    // stop() or clearAll() while that was awaited: this update is dropped
+    // with the rest, and must not take the turn.
+    if (gen != _lifecycleGen) return;
+    final body = IdentifyUserRequest(
+      userName: userName,
+      userId: userId,
+      deviceInfo: deviceInfo,
+    ).toJson()..['userAttributes'] = wire;
+
+    var finished = false;
+    void finish() {
+      if (finished) return;
+      finished = true;
+      // An update from before clearAll() or stop() leaves the order alone.
+      if (gen != _lifecycleGen) return;
+      _userPropsBusy = false;
+      _pumpUserProps();
+    }
+
+    late final void Function() queueIt;
+    Future<void> send() async {
+      // Checked again just before sending: a reset or switch may have
+      // happened while it waited.
+      if (gen != _lifecycleGen ||
+          _userName != userName ||
+          _confirmedName != userName ||
+          _userId != userId) {
+        _logger.debug(
+          'setUserProperties("$userName") not sent: the user '
+          'changed',
+        );
+        return finish();
+      }
+      if (_signatureExpired) {
+        _reportSkipped('identify-user', 'signature-expired');
+        return finish();
+      }
+      // A survey opened meanwhile: send after it closes (an identify-user
+      // during an open survey can drop it on the server).
+      if (_isSurveyOpen) {
+        _waitForSurveyIdle().then(
+          (_) => gen == _lifecycleGen ? queueIt() : finish(),
+        );
+        return;
+      }
+      // Read now: a survey may have run while this update waited.
+      if (_feedbackTransactions != null) {
+        body[r'$feedbackTransactions'] = _feedbackTransactions;
+      }
+      var raw = const <String, dynamic>{};
+      final res = await _post<IdentifyUserResponse>(
+        _endpoints['identifyUser']!,
+        body,
+        (json) {
+          raw = json;
+          return IdentifyUserResponse.fromJson(json);
+        },
+        identifyAs: userName,
+        identifySignature: _userSignature,
+        signatureTime: _userSignatureTime,
+        storedSignature: true,
+      );
+      // A reply for a user who is no longer current: ignored.
+      if (_userName != userName || gen != _lifecycleGen) return finish();
+      if (res.feedbackTransactions != null) {
+        _feedbackTransactions = res.feedbackTransactions;
+        await setFeedbackTransactions(userName, res.feedbackTransactions!);
+      }
+      _handleResponseMeta(pingAgainIn: res.pingAgainIn);
+      await _handleSurveyInReply(
+        nextFeedbackId: raw['nextFeedbackId'] as String?,
+        onPageDelay: (raw['onPageDelay'] as num?)?.toInt(),
+        formConfigurationId: res.formConfigurationId,
+      );
+      finish();
+    }
+
+    queueIt = () {
+      // Increments are sent once: a retry after a timeout could apply them
+      // twice.
+      if (counts) {
+        queue.enqueue(
+          'setUserProperties',
+          send,
+          maxRetries: 1,
+          onDropped: finish,
+        );
+      } else {
+        queue.enqueue('setUserProperties', send, onDropped: finish);
+      }
+      queue.flush().catchError((_) {});
+    };
+    _userPropsWaiting.add(queueIt);
+    _pumpUserProps();
+  }
+
+  /// Queues the next waiting setUserProperties update, once the previous one
+  /// has been sent or dropped.
+  static void _pumpUserProps() {
+    if (_userPropsBusy || _userPropsWaiting.isEmpty) return;
+    _userPropsBusy = true;
+    _userPropsWaiting.removeAt(0)();
+  }
+
+  /// A survey is loading, on screen, or waiting to show (a delayed automatic
+  /// show).
+  static bool get _isSurveyOpen => _surveyBusy || _pendingAutoShow != null;
+
+  /// Completes when no survey is open. One shared check every 500 ms, also
+  /// run when a survey closes; stop() and clearAll() release every waiter.
+  static Future<void> _waitForSurveyIdle() {
+    final waiter = Completer<void>();
+    _surveyIdleWaiters.add(waiter);
+    _surveyIdleTimer ??= Timer.periodic(
+      const Duration(milliseconds: 500),
+      (_) => _checkSurveyIdle(),
+    );
+    return waiter.future;
+  }
+
+  static void _checkSurveyIdle({bool release = false}) {
+    if (!release && _initialized && _isSurveyOpen) return;
+    _surveyIdleTimer?.cancel();
+    _surveyIdleTimer = null;
+    final waiters = List.of(_surveyIdleWaiters);
+    _surveyIdleWaiters.clear();
+    for (final waiter in waiters) {
+      waiter.complete();
+    }
+  }
+
+  /// Ends every wait for a survey and every waiting setUserProperties update
+  /// (clearAll, stop).
+  static void _endWaits() {
+    _lifecycleGen++;
+    _checkSurveyIdle(release: true);
+    _userPropsWaiting.clear();
+    _userPropsBusy = false;
   }
 
   /// Updates the user's locale preference and persists it.
@@ -1111,6 +1585,9 @@ class Encatch {
     if (_isSessionStopped) return;
     _isSessionStopped = true;
     internals.sessionStopped = true;
+    // The next identify turns the session back on, so it must go out even if
+    // it matches the last one.
+    _clearIdentifyMemory();
     _isSessionPaused = false;
     _stopPingInterval();
     _cancelPendingAutoShow();
@@ -1208,8 +1685,11 @@ class Encatch {
   static Future<void> _resetUserNow() async {
     final prevUserName = _userName;
     final prevUserId = _userId;
-    _heldIdentify = null;
-    _lastIdentifyKey = null;
+    // An identify held during a 429 pause was made before this reset (holds
+    // are decided in the identity chain too): it goes with the user.
+    _releaseHeldIdentify();
+    _clearIdentifyMemory();
+    _confirmedName = null;
 
     if (prevUserName != null) {
       await clearUserId(prevUserName);
@@ -1238,6 +1718,9 @@ class Encatch {
     await clearSessionStopped();
 
     _identityConfirmed = false;
+    // Again here: an identify reply may have landed while the reset awaited
+    // storage.
+    _confirmedName = null;
     // The session carries on as a visitor: the ping keeps running, as
     // automatic screen tracking does, on its regular interval and with no
     // extra ping now. Not when the app goes quiet (autoStartVisitorSession
@@ -1437,14 +1920,22 @@ class Encatch {
   /// Stronger than [resetUser] — also clears session-stopped state and device
   /// preferences. Equivalent to a factory reset of the SDK. The SDK remains
   /// initialized; call [identifyUser] to re-identify the user afterward.
-  static Future<void> clearAll() => _serialized(_clearAllNow);
+  static Future<void> clearAll() {
+    // Made before this call: waits for a survey and waiting setUserProperties
+    // updates were for the user being cleared. Ended now, so updates made
+    // after it are not caught by it.
+    _endWaits();
+    return _serialized(_clearAllNow);
+  }
 
   static Future<void> _clearAllNow() async {
     _stopPingInterval();
     _dismissFormController.add(const DismissPayload());
     _isFormVisible = false;
-    _heldIdentify = null;
-    _lastIdentifyKey = null;
+    // Held before this call (holds are decided in the identity chain too).
+    _releaseHeldIdentify();
+    _clearIdentifyMemory();
+    _confirmedName = null;
     _cancelPendingAutoShow();
     rate.clearPauses();
 
@@ -1475,6 +1966,9 @@ class Encatch {
     _isSessionStopped = false;
     internals.sessionStopped = false;
     _identityConfirmed = false;
+    // Again here: an identify reply may have landed while this awaited
+    // storage.
+    _confirmedName = null;
     _sessionRequested = false;
     // The ping is stopped above. With autoStartVisitorSession false,
     // automatic screens stop too, as after resetUser().
@@ -1516,6 +2010,7 @@ class Encatch {
       // may show.
       _openFormRequestedId = null;
       _openFormConfigId = null;
+      if (_surveyIdleWaiters.isNotEmpty) _checkSurveyIdle();
     }
   }
 
@@ -1609,6 +2104,7 @@ class Encatch {
     PendingCompletionCtaScheduler.cancelAll();
     _stopPingInterval();
     queue.stopAppLifecycleListener();
+    _endWaits();
   }
 
   // ============================================================================
@@ -1706,7 +2202,11 @@ class Encatch {
     if (bucket != rate.Bucket.tracking) return;
     final held = _heldIdentify;
     _heldIdentify = null;
-    if (held != null) held().catchError((_) {});
+    // Pending until the call it makes has queued its own identify (or found
+    // it a duplicate), so setUserProperties() keeps waiting meanwhile.
+    if (held != null) {
+      held.send().whenComplete(held.done).catchError((_) {});
+    }
     queue.flush().catchError((_) {});
   }
 
@@ -1723,7 +2223,10 @@ class Encatch {
     rate.clearListenersForTest();
     _removePauseListener = null;
     _heldIdentify = null;
-    _lastIdentifyKey = null;
+    _clearIdentifyMemory();
+    _confirmedName = null;
+    _pendingIdentifies.clear();
+    _endWaits();
     _lastEventAt.clear();
     _lastTrackedScreen = null;
     _lastTrackedScreenAt = 0;
@@ -1889,6 +2392,7 @@ class Encatch {
     String? identifyAs,
     String? identifySignature,
     int? attempt,
+    bool storedSignature = false,
   }) async {
     final url = Uri.parse('$_apiBaseUrl/$endpoint');
     final endpointName = endpoint.split('/').last;
@@ -1953,9 +2457,13 @@ class Encatch {
       if (response.statusCode == 429) {
         rate.pauseFor(rate.bucketOf(endpoint), retryAfterMs);
       }
-      // A 401 on a request that carried a timed signature: it has expired.
+      // A 401 on a request that carried the stored timed signature: it has
+      // expired. identify-user carries the signature that call was given, so
+      // only setUserProperties' identify-user (the stored one) counts, and
+      // only while that user is current.
       if (response.statusCode == 401 &&
-          identifyAs == null &&
+          (identifyAs == null ||
+              (storedSignature && identifyAs == _userName)) &&
           headers.containsKey('X-User-Session-Time')) {
         _onSignatureExpired(
           headers['X-User-Name'],
@@ -1987,6 +2495,9 @@ class Encatch {
     _userSignature = null;
     _userSignatureTime = null;
     _signatureExpired = true;
+    // The next identify (with a fresh signature) must go out, even if it
+    // matches the last one.
+    _clearIdentifyMemory();
     clearUserSignature(sentAs).catchError((_) {});
     _logger.warn(
       'The secure signature for "$sentAs" has expired. Tracking is paused '
@@ -2008,4 +2519,38 @@ class Encatch {
     _logger.debug('User "$sentAs" could not be confirmed; resetting the user');
     resetUser().catchError((_) {});
   }
+}
+
+/// An identify held during a 429 pause, with what the dedupe would remember
+/// had it been sent.
+class _HeldIdentify {
+  _HeldIdentify({
+    required this.userName,
+    required this.traitsKey,
+    required this.optionsKey,
+    required this.locale,
+    required this.country,
+    required this.send,
+    required this.done,
+  });
+
+  final String userName;
+  final String? traitsKey;
+  final String optionsKey;
+  final String? locale;
+  final String? country;
+
+  /// Makes the identify call again, once the pause has ended.
+  final Future<void> Function() send;
+
+  /// Ends its pending entry (safe to call more than once).
+  final void Function() done;
+
+  /// Whether a new call repeats this one (same rule as the dedupe).
+  bool covers(String name, String? traits, IdentifyOptions? options) =>
+      name == userName &&
+      Encatch._identifyOptionsKey(options) == optionsKey &&
+      (options?.locale == null || options?.locale == locale) &&
+      (options?.country == null || options?.country == country) &&
+      (traits == null || traits == traitsKey);
 }

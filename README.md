@@ -94,7 +94,24 @@ await Encatch.identifyUser(
 );
 ```
 
-Call `identifyUser` once, after sign-in. Calling it again with the same user, traits, locale, country and signature sends nothing.
+Call `identifyUser` after sign-in. After the first identify of each app run, a repeat for the same user with the same traits, or none, sends nothing, so calling it on every launch or screen is safe. It is sent again when the signature changes, or when you pass a locale or country that differs from what the last identify carried.
+
+#### Update user properties
+
+To update the signed-in user's properties, for example a counter, use `setUserProperties`. Unlike `identifyUser`, every call is sent:
+
+```dart
+await Encatch.setUserProperties(
+  'user@example.com',
+  const UserTraits(set: {'plan': 'team'}, increment: {'reports_created': 1}),
+);
+```
+
+- The user name must be the current user's, and their identify must have succeeded (or they were restored at launch). Otherwise the call is ignored, so it can never update the wrong person.
+- It waits for that user's identify if it is still in flight, and for an open survey to close. Updates are sent one at a time, in the order you call it.
+- It uses the identify-user endpoint, so it counts against the same rate limit (about 5 per minute per user). A 429 there pauses all tracking for a while.
+- An update with `increment` or `decrement` is not retried after a network or server error, so it can't be applied twice.
+- Don't `await` it inside `onBeforeShowForm`: the survey being shown counts as open, so the update would wait for it while the survey waits for your callback. Call it without `await` there.
 
 Tracking calls made straight after `identifyUser`, without awaiting it, are queued behind it and sent as that user. For a user the device hasn't seen before, anything else sent before the identify reply arrives (a ping, say) goes out as a visitor.
 
@@ -255,7 +272,7 @@ EncatchConfig(
 ```
 
 - `outcome` is `ok`, `error`, `network-error` or `skipped`.
-- For a `skipped` call, `reason` says why the SDK didn't send it: `rate-limited`, `collapsed`, `duplicate`, `signature-expired`, `visitor` or `survey-open`.
+- For a `skipped` call, `reason` says why the SDK didn't send it: `rate-limited`, `collapsed`, `duplicate`, `signature-expired`, `visitor`, `survey-open`, `not-identified` or `wrong-user`.
 - The hooks never receive your API key, headers, the secure signature or request and response bodies.
 - An error thrown inside a hook is ignored.
 - File uploads and the Q&A stream are not reported.

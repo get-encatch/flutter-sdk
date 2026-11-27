@@ -1,12 +1,15 @@
-## 1.2.0-beta.1
+## 1.2.0-beta.2
 
 This release changes how much the SDK sends, how it identifies users and when it shows surveys. No existing method, parameter or type has changed; everything new is optional.
+
+New since 1.2.0-beta.1: `setUserProperties`, and a repeat `identifyUser` for the same user is no longer sent (see below).
 
 **New, all optional**
 - `EncatchConfig.onRequest` and `onResponse`: debug hooks that report each request, and each call the SDK decides not to send, with the reason. They never carry the API key, headers, the secure signature or bodies.
 - `EncatchNavigatorObserver(trackRootRoute: true)`: track the `/` route. Off by default; planned to become the default in a later minor release.
 - `EncatchProvider(autoStartVisitorSession: false)`: visitors get no background ping and no automatic screen tracking. The session starts when `identifyUser` succeeds (the current screen is then sent once) or when the app calls `startSession()`, and stops again on `resetUser()`. A user restored at launch starts as usual, and calls the app makes itself are always sent. On by default, as before. With it off, surveys set to show immediately, after a delay or on a page visit cannot reach visitors.
 - `Encatch.isIdentified`: true when the SDK has a confirmed identity, which means the user was restored at launch or their `identifyUser` succeeded. During a switch to another user it stays true until the new user's identify succeeds.
+- `Encatch.setUserProperties(userName, traits)`: updates the identified user's properties. Every call is sent. It is ignored unless `userName` is the current user and their identify succeeded; it waits for a pending identify and for an open survey to close; it counts against the identify-user rate limit; an update with `increment` or `decrement` is never retried.
 - `EncatchConfig.persistUserAcrossRestarts`: set it to false to keep the user in memory for the current app run only. Nothing about the user is saved on the device, user data an earlier version saved is deleted at init, and the app identifies on every launch. On by default, as before.
 
 **Behaviour changes to be aware of**
@@ -14,7 +17,8 @@ This release changes how much the SDK sends, how it identifies users and when it
 - Survey events reach `Encatch.on` with the form's id. They used to carry an empty id.
 - `resetUser()` no longer stops the background ping. The session carries on as a visitor, ping and automatic screen tracking alike, with no extra ping at the reset. Logged-out visitors can therefore get surveys set to show immediately or after a delay. Set `autoStartVisitorSession` to false for the opposite: no visitor traffic after a sign-out.
 - `stopSession()` now survives an app restart, as documented. An app that relied on the next launch resuming by itself must call `startSession()` or identify a user.
-- Identical calls are sent once: an `identifyUser` identical to the last one, and the same event or screen tracked again within one second.
+- A repeat `identifyUser` for the same user with the same traits, or none, is not sent after the first identify of each app run. It is sent again when the signature changes or a different locale or country is given. Use `setUserProperties` to update properties again on purpose. Traits a request can't carry (a `BigInt`, `NaN`, a circular map) are refused with a warning.
+- The same event or screen tracked again within one second is sent once.
 - `EncatchNavigatorObserver` tracks a route only when its name changes, so closing a dialog no longer tracks the screen underneath again. Going back to the first screen (`/`) counts as a change even though `/` is not tracked, so going home, to A, home and to A again tracks A twice.
 - Visitors no longer send survey events (the server rejected them).
 - The SDK no longer prints to the console. Its messages go through its logger and appear only with `debugMode: true`.

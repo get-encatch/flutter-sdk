@@ -145,11 +145,16 @@ void main() {
     Encatch.trackScreen('/home');
     Encatch.trackScreen('/home');
     async.elapse(const Duration(seconds: 2));
-    expect(skipped(responses), [
-      'identify-user:duplicate',
-      'track-event:collapsed',
-      'track-screen:collapsed',
-    ]);
+    // The identify duplicate is found once earlier identity calls have run,
+    // so it may be reported after the others.
+    expect(
+      skipped(responses),
+      unorderedEquals([
+        'identify-user:duplicate',
+        'track-event:collapsed',
+        'track-screen:collapsed',
+      ]),
+    );
 
     // A survey is open: the same form again, and an automatic one.
     final presenter = FakePresenter();

@@ -104,6 +104,8 @@ void testFake(
   String apiKey = defaultApiKey,
   Map<String, Object> stored = const {},
   void Function(FakeApi api)? configure,
+  bool debugMode = false,
+  void Function(EncatchResponseInfo info)? onResponse,
 }) {
   test(description, () {
     fakeAsync((async) {
@@ -114,6 +116,8 @@ void testFake(
         api,
         apiKey: apiKey,
         stored: stored,
+        debugMode: debugMode,
+        onResponse: onResponse,
       ).catchError((Object e) => setupError = e);
       async.flushMicrotasks();
       expect(setupError, isNull, reason: 'SDK set-up failed');
