@@ -454,6 +454,7 @@ class _LoginScreenState extends State<LoginScreen> {
             });
             setState(() {});
           }),
+          ...identifyButtons(),
           // The app's own call, which is sent whatever the session is doing.
           button('track-own-screen', 'Track a screen myself', () {
             ownScreens++;
@@ -536,6 +537,7 @@ class _HomeTabState extends State<HomeTab> {
           });
           setState(() {});
         }),
+        ...identifyButtons(),
         button('open-dev-page', 'Open dev-page', () => open('/dev-page')),
         button(
           'open-dev-immediate',
@@ -755,6 +757,39 @@ class PlainScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+/// identifyUser() repeats and setUserProperties(), for the dedupe flow. They
+/// act on the current user (the one the SDK holds), so they also work right
+/// after a restart, before anyone logs in again.
+List<Widget> identifyButtons() {
+  String? user() => Encatch.userName;
+  return [
+    button('identify-again', 'Identify again', () {
+      final name = user();
+      if (name == null) return;
+      Encatch.identifyUser(name);
+      note('identify again $name');
+    }),
+    button('identify-free', 'Identify with plan free', () {
+      final name = user();
+      if (name == null) return;
+      Encatch.identifyUser(
+        name,
+        traits: const UserTraits(set: {'e2e_plan': 'free'}),
+      );
+      note('identify free $name');
+    }),
+    button('set-props', 'Set properties', () {
+      final name = user();
+      if (name == null) return;
+      Encatch.setUserProperties(
+        name,
+        const UserTraits(set: {'e2e_tier': 'gold'}, increment: {'e2e_taps': 1}),
+      );
+      note('set properties $name');
+    }),
+  ];
 }
 
 /// The newest things the SDK did, for on-screen checks.

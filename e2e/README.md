@@ -45,6 +45,7 @@ Build and install the app first (`flutter build apk --release` in `e2e/app`, or 
 | M12 | Mock | After a sign-out the session carries on as a visitor: the login screen is tracked and the ping comes on its interval, not at the sign-out |
 | M13 | Mock | The app is closed and reopened: the identified user is restored (the default) |
 | M14 | Mock | The same with `persistUserAcrossRestarts` off: a visitor again, nothing carries a user name or id |
+| M15 | Mock | `identifyUser` repeats are not sent; `setUserProperties` always is, with the user's id; after a restart the first identify of the run is sent |
 | D1–D5 | DEV | Manual, page-visit, tracked-event, immediate and delayed triggers: the right form shows, events carry its id, the X is a dismissal |
 | D6–D7 | DEV | The same for a visitor (manual, page visit): the X sends dismiss-form and no survey event |
 | D8–D11 | DEV | Secure identify: valid and wrong signature, with and without a session time |

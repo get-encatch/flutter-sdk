@@ -98,6 +98,14 @@ function elements() {
   walk(JSON.parse(res.stdout.slice(res.stdout.indexOf('{'))));
   return out;
 }
+/** Stops the test app on this run's device only. */
+function stopApp() {
+  const [cmd, args] =
+    platform === 'ios'
+      ? ['xcrun', ['simctl', 'terminate', device, 'com.encatch.fluttere2e']]
+      : ['adb', ['-s', device, 'shell', 'am', 'force-stop', 'com.encatch.fluttere2e']];
+  spawnSync(cmd, args, { encoding: 'utf8' });
+}
 const tap = (id) => flow('tap', { ID: id });
 const tapText = (text) => flow('tap-text', { TEXT: text });
 
@@ -539,6 +547,58 @@ function restartFlow(title, persist) {
     },
   };
 }
+flows.M15 = {
+  title: 'identifyUser repeats are not sent; setUserProperties always is',
+  async run(c) {
+    await mock('/__mock/reset', 'POST');
+    openMock(); // 1. sign in: identify, no traits
+    await sleep(3000);
+    tap('identify-again'); // 2. not sent
+    await sleep(2000);
+    tap('identify-free'); // 3. sent
+    await sleep(2000);
+    tap('identify-free'); //    not sent
+    await sleep(2000);
+    tap('set-props'); // 4. sent
+    await sleep(2000);
+    tap('set-props'); //    sent again
+    await sleep(2000);
+    tap('identify-free'); // 5. sent: the update cleared identify's traits memory
+    await sleep(3000);
+    const restartedAt = Date.now();
+    flow('restart', { PERSIST_USER: 'yes' }); // 6. the user is kept
+    await sleep(3000);
+    tap('identify-again'); //    first of this run: sent
+    await sleep(2000);
+    tap('identify-again'); //    not sent
+    await sleep(3000);
+
+    // Split by the restart time: Flutter starts a new session id after each
+    // successful identify, so session ids don't mark the launches.
+    const all = await requests();
+    const before = all.filter((r) => r.at < restartedAt);
+    const after = all.filter((r) => r.at >= restartedAt);
+    const identifies = all.filter((r) => r.endpoint === 'identify-user');
+    const kind = (r) => (r.body?.userId ? 'props' : r.body?.userAttributes?.$set?.e2e_plan === 'free' ? 'free' : 'plain');
+    const firstLaunch = identifies.filter((r) => r.at < restartedAt).map(kind);
+    const secondLaunch = identifies.filter((r) => r.at >= restartedAt).map(kind);
+    c.eq('identify-user requests, first launch', firstLaunch, ['plain', 'free', 'props', 'props', 'free']);
+    c.eq('identify-user requests, second launch', secondLaunch, ['plain']);
+    c.eq('identify-user statuses', identifies.map((r) => r.status), identifies.map(() => 200));
+    const user = userOf(identifies[0] ?? { headers: {} });
+    const props = identifies.filter((r) => kind(r) === 'props');
+    c.ok('the updates carry the user\'s real id', props.every((r) => r.body.userId && r.body.userId === idOf(all.find((x) => isIdentified(x) && userOf(x) === user) ?? { headers: {} })), JSON.stringify(props.map((r) => r.body.userId)));
+    c.ok('the updates carry the increment', props.every((r) => r.body.userAttributes?.$increment?.e2e_taps === 1));
+    const dupes = (await hookCalls()).filter((h) => h.endpoint === 'identify-user' && h.reason === 'duplicate');
+    c.eq('duplicates reported before the restart', dupes.filter((h) => h.receivedAt < restartedAt).length, 2);
+    c.eq('duplicates reported after the restart', dupes.filter((h) => h.receivedAt >= restartedAt).length, 1);
+    const second = after.filter((r) => r.endpoint !== 'identify-user');
+    c.ok('requests before the restart', before.length > 0);
+    c.ok('the second launch sends as the user', second.length > 0 && second.every((r) => isIdentified(r) && userOf(r) === user), brief(second));
+    c.eq('401s', all.filter((r) => r.status === 401).length, 0);
+  },
+};
+
 flows.M13 = restartFlow('Restart: the identified user is restored (the default)', true);
 flows.M14 = restartFlow('Restart with persistUserAcrossRestarts off: a visitor again', false);
 
@@ -912,6 +972,10 @@ for (const [id, def] of selected) {
   }
   const checks = new Checks();
   const started = Date.now();
+  // The previous flow's app keeps pinging until it is stopped. Stop it before
+  // the flow clears the mock, or a late request lands in this flow's log.
+  stopApp();
+  await sleep(1000);
   try {
     await def.run(checks);
   } catch (e) {
